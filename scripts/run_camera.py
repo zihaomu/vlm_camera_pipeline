@@ -26,13 +26,14 @@ from src.realtime_pipeline import (
     PyTorchCameraDetector,
     RealtimePipeline,
 )
+from src.vlm import LlamaCppConfig, LlamaCppVlm
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Latest-frame YOLO26 camera demo for AMD Ryzen AI MAX+ 395. "
-            "MVP supports the PyTorch ROCm backend with recording and VLM disabled."
+            "Latest-frame YOLO26 + optional Qwen3-VL camera demo for AMD Ryzen AI MAX+ 395. "
+            "Both inference paths reject CPU fallback."
         )
     )
     parser.add_argument("--backend", choices=("pytorch", "migraphx"), default="pytorch")
@@ -59,6 +60,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--record-path", default="output/realtime/camera.mp4")
     parser.add_argument("--vlm", choices=("off", "llamacpp"), default="off")
     parser.add_argument("--vlm-interval", type=float, default=6.0)
+    parser.add_argument(
+        "--vlm-server",
+        default="third_party/llama.cpp/build-gfx1151/bin/llama-server",
+    )
+    parser.add_argument("--vlm-model", default="models/Qwen3-VL-8B-Instruct-Q8_0.gguf")
+    parser.add_argument("--vlm-mmproj", default="models/mmproj-F16.gguf")
+    parser.add_argument("--vlm-port", type=int, default=0)
+    parser.add_argument("--vlm-timeout", type=float, default=120.0)
+    parser.add_argument("--vlm-startup-timeout", type=float, default=180.0)
+    parser.add_argument("--vlm-caption-expiry", type=float, default=15.0)
+    parser.add_argument("--vlm-context-size", type=int, default=4096)
+    parser.add_argument("--vlm-image-max-tokens", type=int, default=512)
+    parser.add_argument("--vlm-max-tokens", type=int, default=64)
+    parser.add_argument(
+        "--vlm-prompt",
+        default=(
+            "Describe this camera image in one short English sentence. "
+            "Mention the main objects and action; do not speculate."
+        ),
+    )
+    parser.add_argument("--vlm-log", default="output/realtime/llama-server.log")
     parser.add_argument("--max-latency-ms", type=float, default=150.0)
     parser.add_argument("--metrics-json", default="output/realtime/metrics.json")
     parser.add_argument(
@@ -78,14 +100,24 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         )
     if args.record != "off":
         parser.error("recording belongs to M4 and is not enabled in the M2 implementation")
-    if args.vlm != "off":
-        parser.error("llama.cpp VLM captions belong to M5 and are not enabled yet")
     if not 0.0 <= args.confidence <= 1.0:
         parser.error("--confidence must be between 0 and 1")
     if not 0.0 <= args.iou <= 1.0:
         parser.error("--iou must be between 0 and 1")
     if args.imgsz <= 0:
         parser.error("--imgsz must be positive")
+    if args.vlm_interval <= 0:
+        parser.error("--vlm-interval must be positive")
+    if args.vlm_timeout <= 0 or args.vlm_startup_timeout <= 0:
+        parser.error("VLM timeouts must be positive")
+    if args.vlm_caption_expiry <= 0:
+        parser.error("--vlm-caption-expiry must be positive")
+    if args.vlm_context_size < 1024:
+        parser.error("--vlm-context-size must be at least 1024")
+    if args.vlm_image_max_tokens <= 0 or args.vlm_max_tokens <= 0:
+        parser.error("VLM token limits must be positive")
+    if not 0 <= args.vlm_port <= 65535:
+        parser.error("--vlm-port must be between 0 and 65535")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -114,6 +146,26 @@ def main(argv: list[str] | None = None) -> int:
         half=args.half,
         nms_mode=args.nms_mode,
     )
+    vlm_engine = (
+        LlamaCppVlm(
+            LlamaCppConfig(
+                server_path=args.vlm_server,
+                model_path=args.vlm_model,
+                mmproj_path=args.vlm_mmproj,
+                log_path=args.vlm_log,
+                port=args.vlm_port,
+                context_size=args.vlm_context_size,
+                image_max_tokens=args.vlm_image_max_tokens,
+                max_tokens=args.vlm_max_tokens,
+                timeout_seconds=args.vlm_timeout,
+                startup_timeout_seconds=args.vlm_startup_timeout,
+                prompt=args.vlm_prompt,
+            ),
+            workspace=WORKSPACE,
+        )
+        if args.vlm == "llamacpp"
+        else None
+    )
     pipeline = RealtimePipeline(
         camera,
         detector,
@@ -124,7 +176,10 @@ def main(argv: list[str] | None = None) -> int:
             metrics_json=args.metrics_json,
             duration_seconds=args.duration_seconds,
             warmup_iterations=args.warmup_iterations,
+            vlm_interval_seconds=args.vlm_interval,
+            vlm_caption_expiry_seconds=args.vlm_caption_expiry,
         ),
+        vlm_engine=vlm_engine,
     )
 
     previous_handlers: dict[int, signal.Handlers] = {}

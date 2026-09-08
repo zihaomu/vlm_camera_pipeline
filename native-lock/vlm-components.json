@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-08T19:26:45+08:00",
+  "hardware": {
+    "gpu_arch": "gfx1151",
+    "gpu_name": "AMD Radeon Graphics",
+    "llama_device": "ROCm0"
+  },
+  "llama_cpp": {
+    "commit": "0b1bad14ff204627636aeb1de22ddcd5acb859d4",
+    "describe": "gguf-v0.19.0-1334-g0b1bad14f",
+    "version": "10380",
+    "host_compiler": "GNU 13.3.0",
+    "cmake": "3.28.3",
+    "ninja": "1.11.1",
+    "hip": "7.2.53211-e1a6bc5663",
+    "hip_compiler": "AMD clang 22.0.0git roc-7.2.1",
+    "cmake_options": {
+      "CMAKE_BUILD_TYPE": "Release",
+      "GGML_HIP": true,
+      "GPU_TARGETS": "gfx1151",
+      "LLAMA_BUILD_UI": false,
+      "LLAMA_USE_PREBUILT_UI": false
+    },
+    "hip_code_objects": [
+      "hipv4-amdgcn-amd-amdhsa--gfx1151"
+    ]
+  },
+  "models": {
+    "revision": "b93a7ee713758252c555be4210c00540df954dc2",
+    "language": {
+      "repository": "unsloth/Qwen3-VL-8B-Instruct-GGUF",
+      "file": "Qwen3-VL-8B-Instruct-Q8_0.gguf",
+      "bytes": 8709520224,
+      "sha256": "cb8616bf6ed228982d9e47d7b72b42195342efa26044b0ee1873e61d9e78d3d7"
+    },
+    "mmproj": {
+      "repository": "unsloth/Qwen3-VL-8B-Instruct-GGUF",
+      "file": "mmproj-F16.gguf",
+      "bytes": 1159030336,
+      "sha256": "d406d03ebabefdef86a2c86bf0c1b65f9e046f7a81c218f25de4931b46a07fc4"
+    }
+  },
+  "gpu_gate": {
+    "model_layers_offloaded": 37,
+    "model_layers_total": 37,
+    "mmproj_backend": "ROCm0",
+    "process_has_dev_kfd": true,
+    "cpu_fallback_detected": false,
+    "request_seconds": 2.195,
+    "gpu_use_percent_max": 87,
+    "vram_used_bytes_max": 12545843200
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "caption": "A blurred pedestrian crosses a street in front of a dark SUV, with bounding boxes highlighting the person and car in a real-time object detection overlay.",
+  "gpu": {
+    "cpu_fallback_detected": false,
+    "device": "ROCm0",
+    "mmproj_backend": "ROCm0",
+    "model_layers_offloaded": 37,
+    "model_layers_total": 37,
+    "process_has_dev_kfd": true,
+    "sample_count": 6,
+    "use_percent_max": 87,
+    "vram_used_bytes_max": 12545843200
+  },
+  "http_status": 200,
+  "input_image": "output/realtime/screenshots/pytorch-replay.jpg",
+  "llama_cpp": {
+    "command": [
+      "/home/amd/work/vlm_camera_pipeline/third_party/llama.cpp/build-gfx1151/bin/llama-server",
+      "--model",
+      "/home/amd/work/vlm_camera_pipeline/models/Qwen3-VL-8B-Instruct-Q8_0.gguf",
+      "--mmproj",
+      "/home/amd/work/vlm_camera_pipeline/models/mmproj-F16.gguf",
+      "--alias",
+      "qwen3-vl-8b-instruct",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "37861",
+      "--api-key",
+      "<redacted>",
+      "--device",
+      "ROCm0",
+      "--gpu-layers",
+      "all",
+      "--fit",
+      "off",
+      "--mmproj-offload",
+      "--ctx-size",
+      "4096",
+      "--parallel",
+      "1",
+      "--threads",
+      "8",
+      "--threads-batch",
+      "8",
+      "--batch-size",
+      "512",
+      "--ubatch-size",
+      "256",
+      "--image-max-tokens",
+      "512",
+      "--mtmd-batch-max-tokens",
+      "512",
+      "--reasoning",
+      "off",
+      "--no-webui",
+      "--no-slots",
+      "--verbosity",
+      "5"
+    ],
+    "commit": "0b1bad14ff204627636aeb1de22ddcd5acb859d4",
+    "hip_code_objects": [
+      "hipv4-amdgcn-amd-amdhsa--gfx1151"
+    ],
+    "server": "third_party/llama.cpp/build-gfx1151/bin/llama-server"
+  },
+  "models": {
+    "language": {
+      "bytes": 8709520224,
+      "path": "models/Qwen3-VL-8B-Instruct-Q8_0.gguf",
+      "sha256": "cb8616bf6ed228982d9e47d7b72b42195342efa26044b0ee1873e61d9e78d3d7"
+    },
+    "mmproj": {
+      "bytes": 1159030336,
+      "path": "models/mmproj-F16.gguf",
+      "sha256": "d406d03ebabefdef86a2c86bf0c1b65f9e046f7a81c218f25de4931b46a07fc4"
+    }
+  },
+  "request_seconds": 2.195,
+  "schema_version": 1,
+  "server_capabilities": [
+    "completion",
+    "multimodal"
+  ],
+  "server_ready_seconds": 1.268,
+  "started_at": "2026-09-08T19:25:25+08:00"
+}

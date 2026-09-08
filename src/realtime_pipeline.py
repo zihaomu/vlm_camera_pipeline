@@ -18,6 +18,7 @@ from typing import Any, Protocol
 import numpy as np
 
 from .camera_io import CameraReader, CapturedFrame, LatestFrameSlot
+from .vlm import LatestCaptionSlot, VlmCaption, VlmEngine, VlmWorker
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,8 +123,17 @@ class _RateWindow:
 class MetricsCollector:
     """Collect bounded-rate counters and latency samples for one run."""
 
-    def __init__(self, backend: str, *, started_ns: int | None = None) -> None:
+    def __init__(
+        self,
+        backend: str,
+        *,
+        started_ns: int | None = None,
+        vlm_mode: str = "off",
+    ) -> None:
+        if vlm_mode not in {"off", "llamacpp"}:
+            raise ValueError(f"unsupported VLM metrics mode: {vlm_mode}")
         self.backend = backend
+        self.vlm_mode = vlm_mode
         self.started_ns = started_ns or time.monotonic_ns()
         self.finished_ns: int | None = None
         self._lock = threading.Lock()
@@ -148,6 +158,16 @@ class MetricsCollector:
         self._rss_bytes: deque[int] = deque(maxlen=3_600)
         self._gpu_power_watts: deque[float] = deque(maxlen=3_600)
         self._gpu_temperature_c: deque[float] = deque(maxlen=3_600)
+        self.vlm_requests = 0
+        self.vlm_successes = 0
+        self.vlm_failures = 0
+        self.vlm_cancelled = 0
+        self.vlm_latest_sequence: int | None = None
+        self.vlm_latest_caption: str | None = None
+        self.vlm_last_error: str | None = None
+        self._vlm_latest_completed_ns: int | None = None
+        self._vlm_request_ms: deque[float] = deque(maxlen=10_000)
+        self._capture_to_caption_ms: deque[float] = deque(maxlen=10_000)
 
     def record_inference(
         self,
@@ -197,10 +217,46 @@ class MetricsCollector:
             if temperature is not None:
                 self._gpu_temperature_c.append(temperature)
 
+    def record_vlm_started(self) -> None:
+        with self._lock:
+            self.vlm_requests += 1
+
+    def record_vlm_success(
+        self,
+        frame: CapturedFrame,
+        requested_ns: int,
+        completed_ns: int,
+        text: str,
+    ) -> None:
+        with self._lock:
+            self.vlm_successes += 1
+            self.vlm_latest_sequence = frame.sequence
+            self.vlm_latest_caption = text
+            self.vlm_last_error = None
+            self._vlm_latest_completed_ns = completed_ns
+            self._vlm_request_ms.append((completed_ns - requested_ns) / 1e6)
+            self._capture_to_caption_ms.append((completed_ns - frame.captured_ns) / 1e6)
+
+    def record_vlm_failure(
+        self,
+        requested_ns: int,
+        completed_ns: int,
+        error: BaseException,
+    ) -> None:
+        with self._lock:
+            self.vlm_failures += 1
+            self.vlm_last_error = f"{type(error).__name__}: {error}"[:500]
+            self._vlm_request_ms.append((completed_ns - requested_ns) / 1e6)
+
+    def record_vlm_cancelled(self, requested_ns: int, completed_ns: int) -> None:
+        with self._lock:
+            self.vlm_cancelled += 1
+            self._vlm_request_ms.append((completed_ns - requested_ns) / 1e6)
+
     def live_summary(self, now_ns: int | None = None) -> dict[str, Any]:
         current_ns = now_ns or time.monotonic_ns()
         with self._lock:
-            return {
+            summary = {
                 "backend": self.backend,
                 "inference_fps": round(self._infer_rate.rate(current_ns), 2),
                 "display_fps": round(self._display_rate.rate(current_ns), 2),
@@ -217,6 +273,30 @@ class MetricsCollector:
                     _percentile(self._capture_to_display_recent, 95)
                 ),
             }
+            if self.vlm_mode != "off":
+                caption_age_seconds = (
+                    (current_ns - self._vlm_latest_completed_ns) / 1e9
+                    if self._vlm_latest_completed_ns is not None
+                    else None
+                )
+                summary.update(
+                    {
+                        "vlm_mode": self.vlm_mode,
+                        "vlm_requests": self.vlm_requests,
+                        "vlm_successes": self.vlm_successes,
+                        "vlm_failures": self.vlm_failures,
+                        "vlm_cancelled": self.vlm_cancelled,
+                        "vlm_in_flight": max(
+                            0,
+                            self.vlm_requests
+                            - self.vlm_successes
+                            - self.vlm_failures
+                            - self.vlm_cancelled,
+                        ),
+                        "vlm_caption_age_seconds": _round_optional(caption_age_seconds),
+                    }
+                )
+            return summary
 
     def finish(
         self,
@@ -225,9 +305,10 @@ class MetricsCollector:
         camera_read_failures: int,
         camera_format: dict[str, Any] | None,
         exit_reason: str,
+        finished_ns: int | None = None,
     ) -> dict[str, Any]:
         self.sample_system()
-        finished_ns = time.monotonic_ns()
+        finished_ns = finished_ns or time.monotonic_ns()
         with self._lock:
             self.finished_ns = finished_ns
             self.camera_read_failures = camera_read_failures
@@ -261,8 +342,38 @@ class MetricsCollector:
                 "gpu_power_watts": _summary(self._gpu_power_watts),
                 "gpu_temperature_c": _summary(self._gpu_temperature_c),
                 "record": {"mode": "off", "queue_depth": 0},
-                "vlm": {"mode": "off", "requests": 0, "failures": 0},
+                "vlm": self._vlm_summary(finished_ns),
             }
+
+    def _vlm_summary(self, finished_ns: int) -> dict[str, Any]:
+        if self.vlm_mode == "off":
+            return {"mode": "off", "requests": 0, "failures": 0}
+        caption_age_seconds = (
+            max(0, finished_ns - self._vlm_latest_completed_ns) / 1e9
+            if self._vlm_latest_completed_ns is not None
+            else None
+        )
+        return {
+            "mode": self.vlm_mode,
+            "requests": self.vlm_requests,
+            "successes": self.vlm_successes,
+            "failures": self.vlm_failures,
+            "cancelled": self.vlm_cancelled,
+            "in_flight": max(
+                0,
+                self.vlm_requests
+                - self.vlm_successes
+                - self.vlm_failures
+                - self.vlm_cancelled,
+            ),
+            "latest_sequence": self.vlm_latest_sequence,
+            "latest_caption": self.vlm_latest_caption,
+            "latest_caption_age_seconds": _round_optional(caption_age_seconds),
+            "last_error": self.vlm_last_error,
+            "request_latency_ms": _summary(self._vlm_request_ms),
+            "capture_to_caption_ms": _summary(self._capture_to_caption_ms),
+            "queue_depth": 1,
+        }
 
     @staticmethod
     def write_json(path: str | Path, metrics: dict[str, Any]) -> None:
@@ -551,6 +662,8 @@ class PipelineConfig:
     metrics_json: str = "output/realtime/metrics.json"
     duration_seconds: float | None = None
     warmup_iterations: int = 2
+    vlm_interval_seconds: float = 6.0
+    vlm_caption_expiry_seconds: float = 15.0
     window_name: str = "YOLO26 on Ryzen AI MAX+ 395"
 
     def __post_init__(self) -> None:
@@ -562,6 +675,10 @@ class PipelineConfig:
             raise ValueError("duration_seconds must be positive when provided")
         if self.warmup_iterations < 1:
             raise ValueError("warmup_iterations must be at least one")
+        if self.vlm_interval_seconds <= 0:
+            raise ValueError("vlm_interval_seconds must be positive")
+        if self.vlm_caption_expiry_seconds <= 0:
+            raise ValueError("vlm_caption_expiry_seconds must be positive")
 
 
 class RealtimePipeline:
@@ -572,12 +689,19 @@ class RealtimePipeline:
         camera: CameraReader,
         detector: Detector,
         config: PipelineConfig,
+        *,
+        vlm_engine: VlmEngine | None = None,
     ) -> None:
         self.camera = camera
         self.detector = detector
         self.config = config
+        self.vlm_engine = vlm_engine
         self.result_slot = LatestResultSlot()
-        self.metrics = MetricsCollector(detector.backend_name)
+        self.caption_slot = LatestCaptionSlot()
+        self.metrics = MetricsCollector(
+            detector.backend_name,
+            vlm_mode=vlm_engine.mode if vlm_engine is not None else "off",
+        )
         self._stop_event = threading.Event()
 
     def request_stop(self) -> None:
@@ -589,8 +713,14 @@ class RealtimePipeline:
         exit_reason = "requested"
         camera_baseline = 0
         worker: InferenceWorker | None = None
-        self.camera.start()
+        vlm_worker: VlmWorker | None = None
+        vlm_started = False
+        measurement_finished_ns: int | None = None
         try:
+            if self.vlm_engine is not None:
+                self.vlm_engine.start()
+                vlm_started = True
+            self.camera.start()
             first_frame = self.camera.slot.consume_after(-1, timeout=5.0)
             if first_frame is None:
                 self.camera.raise_if_failed()
@@ -600,7 +730,12 @@ class RealtimePipeline:
             latest_after_warmup = self.camera.slot.latest()
             assert latest_after_warmup is not None
             camera_baseline = self.camera.published_frames
-            self.metrics = MetricsCollector(self.detector.backend_name)
+            self.metrics = MetricsCollector(
+                self.detector.backend_name,
+                vlm_mode=(
+                    self.vlm_engine.mode if self.vlm_engine is not None else "off"
+                ),
+            )
             worker = InferenceWorker(
                 self.camera.slot,
                 self.result_slot,
@@ -610,12 +745,27 @@ class RealtimePipeline:
                 initial_sequence=latest_after_warmup.sequence,
             )
             worker.start()
-            exit_reason = self._main_loop(cv2, worker)
+            if self.vlm_engine is not None:
+                vlm_worker = VlmWorker(
+                    self.camera.slot,
+                    self.caption_slot,
+                    self.vlm_engine,
+                    self.metrics,
+                    interval_seconds=self.config.vlm_interval_seconds,
+                )
+                vlm_worker.start()
+            exit_reason = self._main_loop(cv2, worker, vlm_worker)
+            measurement_finished_ns = time.monotonic_ns()
         except KeyboardInterrupt:
             exit_reason = "keyboard_interrupt"
+            measurement_finished_ns = time.monotonic_ns()
         finally:
+            if measurement_finished_ns is None:
+                measurement_finished_ns = time.monotonic_ns()
             self._stop_event.set()
             stop_errors: list[Exception] = []
+            if vlm_worker is not None:
+                vlm_worker.request_stop()
             try:
                 self.camera.stop()
             except Exception as exc:  # noqa: BLE001 - complete remaining cleanup first.
@@ -624,6 +774,22 @@ class RealtimePipeline:
                 try:
                     worker.stop()
                     worker.raise_if_failed()
+                except Exception as exc:  # noqa: BLE001 - complete remaining cleanup first.
+                    stop_errors.append(exc)
+            if vlm_worker is not None:
+                # A normal caption takes about two seconds on this host. Give an in-flight
+                # request a short grace period so shutdown does not turn success into noise.
+                vlm_worker.wait(timeout=5.0)
+            if self.vlm_engine is not None and vlm_started:
+                try:
+                    # Stopping the server also interrupts a request currently blocked in HTTP.
+                    self.vlm_engine.stop()
+                except Exception as exc:  # noqa: BLE001 - complete remaining cleanup first.
+                    stop_errors.append(exc)
+            if vlm_worker is not None:
+                try:
+                    vlm_worker.join()
+                    vlm_worker.raise_if_failed()
                 except Exception as exc:  # noqa: BLE001 - complete remaining cleanup first.
                     stop_errors.append(exc)
             if self.config.display:
@@ -648,6 +814,7 @@ class RealtimePipeline:
                 camera_read_failures=self.camera.read_failures,
                 camera_format=camera_format,
                 exit_reason=exit_reason,
+                finished_ns=measurement_finished_ns,
             )
             runtime_info = getattr(self.detector, "runtime_info", None)
             metrics["detector"] = (
@@ -660,13 +827,22 @@ class RealtimePipeline:
                 "display_mode": self.config.display_mode,
                 "max_latency_ms": self.config.max_latency_ms,
                 "warmup_iterations": self.config.warmup_iterations,
+                "vlm_interval_seconds": self.config.vlm_interval_seconds,
+                "vlm_caption_expiry_seconds": self.config.vlm_caption_expiry_seconds,
             }
+            if self.vlm_engine is not None:
+                metrics["vlm"]["runtime"] = self.vlm_engine.runtime_info()
             MetricsCollector.write_json(self.config.metrics_json, metrics)
             if stop_errors:
                 raise RuntimeError("pipeline shutdown failed") from stop_errors[0]
         return metrics
 
-    def _main_loop(self, cv2: Any, worker: InferenceWorker) -> str:
+    def _main_loop(
+        self,
+        cv2: Any,
+        worker: InferenceWorker,
+        vlm_worker: VlmWorker | None,
+    ) -> str:
         last_live_sequence = -1
         last_processed_sequence = -1
         next_report = time.monotonic() + 1.0
@@ -680,6 +856,8 @@ class RealtimePipeline:
 
             self.camera.raise_if_failed()
             worker.raise_if_failed()
+            if vlm_worker is not None:
+                vlm_worker.raise_if_failed()
             live_frame = self.camera.slot.consume_after(last_live_sequence, timeout=0.1)
             if live_frame is None:
                 continue
@@ -720,6 +898,10 @@ class RealtimePipeline:
             if self.config.display:
                 live_metrics = self.metrics.live_summary(now_ns)
                 live_metrics["capture_fps"] = round(self.camera.capture_fps, 2)
+                caption = self.caption_slot.latest_fresh(
+                    now_ns,
+                    self.config.vlm_caption_expiry_seconds,
+                )
                 preview = draw_on_host_frame(
                     display_frame.bgr,
                     usable_result.detections if usable_result else (),
@@ -728,6 +910,7 @@ class RealtimePipeline:
                         compatible_result.sequence if compatible_result is not None else None
                     ),
                     detection_age_ms=(detection_age_ms if compatible_result is not None else None),
+                    caption=caption,
                 )
                 display_started_ns = time.monotonic_ns()
                 cv2.imshow(self.config.window_name, preview)
@@ -761,6 +944,7 @@ def draw_on_host_frame(
     *,
     detection_sequence: int | None,
     detection_age_ms: float | None,
+    caption: VlmCaption | None = None,
 ) -> np.ndarray:
     """Copy and annotate a host BGR frame; the captured input stays read-only."""
 
@@ -804,8 +988,20 @@ def draw_on_host_frame(
             f"{_format_metric(live_metrics.get('capture_to_display_p95_ms'))} ms"
         ),
     ]
+    if live_metrics.get("vlm_mode", "off") != "off":
+        caption_age = live_metrics.get("vlm_caption_age_seconds")
+        caption_age_text = "n/a" if caption_age is None else f"{float(caption_age):.1f}s"
+        caption_text = caption.text if caption is not None else "waiting for first caption"
+        caption_text = caption_text[:110]
+        lines.append(
+            "VLM "
+            f"ok/fail/in-flight: {live_metrics.get('vlm_successes', 0)}/"
+            f"{live_metrics.get('vlm_failures', 0)}/"
+            f"{live_metrics.get('vlm_in_flight', 0)}  age: {caption_age_text}"
+        )
+        lines.append(f"caption: {caption_text}")
     panel_height = 24 * len(lines) + 10
-    panel_width = min(width - 5, 720)
+    panel_width = min(width - 5, 1240)
     # One captured-frame copy is required for drawing; avoid a second full-frame
     # overlay allocation in the hot UI loop.
     cv2.rectangle(preview, (5, 5), (panel_width, panel_height), (0, 0, 0), -1)

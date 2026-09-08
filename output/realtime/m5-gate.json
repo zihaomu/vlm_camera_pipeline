@@ -1,0 +1,171 @@
+{
+  "checks": [
+    {
+      "actual": "duration_elapsed",
+      "expected": "duration_elapsed",
+      "name": "clean_duration_exit",
+      "passed": true
+    },
+    {
+      "actual": 30.008,
+      "expected": ">= 29.0",
+      "name": "duration_seconds",
+      "passed": true
+    },
+    {
+      "actual": 0,
+      "expected": "0",
+      "name": "camera_read_failures",
+      "passed": true
+    },
+    {
+      "actual": 29.859,
+      "expected": ">= 25.0",
+      "name": "capture_fps",
+      "passed": true
+    },
+    {
+      "actual": 25.893,
+      "expected": ">= 25.0",
+      "name": "inference_fps",
+      "passed": true
+    },
+    {
+      "actual": 29.793,
+      "expected": ">= 25.0",
+      "name": "display_fps",
+      "passed": true
+    },
+    {
+      "actual": 28.721,
+      "expected": "<= 150.0",
+      "name": "capture_to_display_p95_ms",
+      "passed": true
+    },
+    {
+      "actual": {
+        "arch": "gfx1151",
+        "device": "cuda:0"
+      },
+      "expected": "gfx1151 through the ROCm CUDA compatibility API",
+      "name": "yolo_gpu",
+      "passed": true
+    },
+    {
+      "actual": "9fdd44a31c504547ffb81d2c6d9e6dac3493c8eaa8b0398d3f43bae6c7003e92",
+      "expected": "9fdd44a31c504547ffb81d2c6d9e6dac3493c8eaa8b0398d3f43bae6c7003e92",
+      "name": "yolo_model_sha256",
+      "passed": true
+    },
+    {
+      "actual": "llamacpp",
+      "expected": "llamacpp",
+      "name": "vlm_mode",
+      "passed": true
+    },
+    {
+      "actual": 6,
+      "expected": ">= 4",
+      "name": "vlm_request_count",
+      "passed": true
+    },
+    {
+      "actual": {
+        "cancelled": 0,
+        "failures": 0,
+        "in_flight": 0,
+        "requests": 6,
+        "successes": 6
+      },
+      "expected": "requests=successes, failures=cancelled=in_flight=0",
+      "name": "vlm_all_requests_succeeded",
+      "passed": true
+    },
+    {
+      "actual": 1,
+      "expected": "1 (latest snapshot only)",
+      "name": "vlm_queue_depth",
+      "passed": true
+    },
+    {
+      "actual": 2268.591,
+      "expected": "<= 5000.0",
+      "name": "vlm_request_p95_ms",
+      "passed": true
+    },
+    {
+      "actual": [
+        "completion",
+        "multimodal"
+      ],
+      "expected": "contains multimodal",
+      "name": "multimodal_capability",
+      "passed": true
+    },
+    {
+      "actual": "ROCm0",
+      "expected": "ROCm0",
+      "name": "vlm_device",
+      "passed": true
+    },
+    {
+      "actual": "37/37",
+      "expected": "all model layers",
+      "name": "vlm_full_model_gpu_offload",
+      "passed": true
+    },
+    {
+      "actual": "ROCm0",
+      "expected": "ROCm0",
+      "name": "vlm_mmproj_gpu_offload",
+      "passed": true
+    },
+    {
+      "actual": false,
+      "expected": "false",
+      "name": "vlm_no_cpu_fallback",
+      "passed": true
+    },
+    {
+      "actual": true,
+      "expected": "true",
+      "name": "vlm_process_has_dev_kfd",
+      "passed": true
+    },
+    {
+      "actual": [
+        "hipv4-amdgcn-amd-amdhsa--gfx1151"
+      ],
+      "expected": "[hipv4-amdgcn-amd-amdhsa--gfx1151]",
+      "name": "vlm_hip_code_object",
+      "passed": true
+    },
+    {
+      "actual": "cb8616bf6ed228982d9e47d7b72b42195342efa26044b0ee1873e61d9e78d3d7",
+      "expected": "cb8616bf6ed228982d9e47d7b72b42195342efa26044b0ee1873e61d9e78d3d7",
+      "name": "vlm_model_sha256",
+      "passed": true
+    },
+    {
+      "actual": "d406d03ebabefdef86a2c86bf0c1b65f9e046f7a81c218f25de4931b46a07fc4",
+      "expected": "d406d03ebabefdef86a2c86bf0c1b65f9e046f7a81c218f25de4931b46a07fc4",
+      "name": "vlm_mmproj_sha256",
+      "passed": true
+    },
+    {
+      "actual": "off",
+      "expected": "off",
+      "name": "optional_recording_off",
+      "passed": true
+    },
+    {
+      "actual": 0,
+      "expected": "0 reset/fault/hang/timeout events",
+      "name": "gpu_kernel_errors",
+      "passed": true
+    }
+  ],
+  "gate": "M5-yolo-qwen3-vl-short",
+  "passed": true,
+  "schema_version": 1
+}

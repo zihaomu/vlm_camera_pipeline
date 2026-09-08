@@ -1,6 +1,6 @@
 # Ultralytics YOLO26 在 AMD Ryzen AI MAX+ 395（含 PRO 395）上的本地摄像头实时部署方案
 
-> 文档状态：M0/M1/M2 已通过并归档；PyTorch ROCm 摄像头实时 Demo 可持续运行
+> 文档状态：M0/M1/M2 已通过并归档；M5 Qwen3-VL GPU 与 30 秒实时窗口 Gate 已通过
 >
 > 编写日期：2026-09-08
 >
@@ -16,7 +16,7 @@
 
 ## 0. 实施进度（持续更新）
 
-当前实施分支：`feature/gfx1151-native-camera`
+当前实施分支：`feature/qwen3-vl-gfx1151`
 
 | 时间 | 里程碑 | 状态 | 本机实测与产物 |
 |---|---|---|---|
@@ -29,6 +29,8 @@
 | 2026-09-08 17:04 CST | M1 10 分钟 Camera Gate | **通过** | 600.106 秒、17,899 发布帧、17,897 显示帧、稳态 29.828 FPS、帧间隔 p95 34.062 ms、0 读取失败；RSS 108→128 MiB（增长 20.5 MiB）；`output/bringup/camera-baseline-10m.json` |
 | 2026-09-08 17:04 CST | M1 锁定回放正确性 | **通过** | `sidewalk.mp4` 首帧在 gfx1151/FP16 检出 5 个目标（3 person、truck、car），模型声明 `end2end=true` 且未增加外部 NMS；JSON 与截图位于 `output/realtime/pytorch-replay-*` |
 | 2026-09-08 17:34 CST | M2 30 分钟实时窗口 Gate | **通过** | 1800.130 秒；camera 53,680 帧、inference 53,679 帧、display 53,666 帧；capture/inference/display 29.820/29.820/29.812 FPS；capture-to-display p95 14.951 ms；丢 1 帧、0 读取失败；RSS 峰值增长 9.633 MiB；测试时段 0 个 GPU reset/fault/hang；`output/realtime/m2-gate.json` 14/14 通过 |
+| 2026-09-08 19:25 CST | M5 Qwen3-VL 独立 GPU Gate | **通过** | 两份 GGUF 大小与 SHA-256 一致；真实 JPEG 请求 2.195 秒并生成正确字幕；主模型 37/37 层 offload、mmproj=`ROCm0`、进程持有 `/dev/kfd`，采样峰值 GPU use 87%、VRAM used 12,545,843,200 bytes；`output/bringup/qwen3-vl-gpu-smoke.json` |
+| 2026-09-08 19:26 CST | M5 YOLO + VLM 实时窗口 Gate | **通过（30 秒短测）** | 30.008 秒；capture/inference/display 29.859/25.893/29.793 FPS，capture-to-display p95 28.721 ms，0 camera failure；VLM 6/6 成功、0 失败、请求均值 2.119 秒、queue depth 1；0 GPU reset/fault/hang；`output/realtime/m5-gate.json` 25/25 通过 |
 
 进度表只记录已经在本机执行并取得证据的结果；设计目标不会提前标记为完成。运行日志默认不提交 Git，精简后的环境、版本与 SHA 身份写入 `native-lock/` 后提交。
 
@@ -93,7 +95,7 @@
 | 可选 Route M | MIGraphX | `https://github.com/ROCm/AMDMIGraphX` | 必须与目标 ROCm release 匹配 |
 | 可选优化 | OpenCV HIP fork | `https://github.com/zhangnju/opencv.git` | commit `e0387086b2103c23b3b25952b5fb700ca2e42132` |
 | 可选优化 | OpenCV contrib HIP fork | `https://github.com/zhangnju/opencv_contrib.git` | commit `467cbc6f99aa82ebda39a2e94d6125557bd84d0b` |
-| 可选 VLM | Qwen3-VL GGUF | `https://huggingface.co/unsloth/Qwen3-VL-8B-Instruct-GGUF` | 主 GGUF + `mmproj-F16.gguf` |
+| 可选 VLM | Qwen3-VL GGUF | `https://huggingface.co/unsloth/Qwen3-VL-8B-Instruct-GGUF` | revision `b93a7ee713758252c555be4210c00540df954dc2`；主 GGUF + `mmproj-F16.gguf` |
 | 可选 VLM | llama.cpp | `https://github.com/ggml-org/llama.cpp.git` | gfx1151 参考 commit `0b1bad14ff204627636aeb1de22ddcd5acb859d4` |
 | 参考 fallback | TheRock gfx1151 wheel index | `https://rocm.nightlies.amd.com/v2/gfx1151/` | 历史参考 pin，不替代当前兼容矩阵 |
 
@@ -878,25 +880,32 @@ done
 ```text
 src/camera_io.py
 src/realtime_pipeline.py
+src/vlm.py
 scripts/run_camera.py
 scripts/check_gfx1151_environment.py
 scripts/check_camera_baseline.py
 scripts/check_pytorch_replay.py
+scripts/check_vlm_gpu.py
 scripts/evaluate_m2_metrics.py
+scripts/evaluate_m5_metrics.py
 scripts/setup_native_gfx1151.sh
+scripts/setup_vlm_gfx1151.sh
 tests/test_latest_frame_queue.py
 tests/test_camera_replay.py
 tests/test_realtime_metrics.py
 tests/test_m2_gate.py
+tests/test_m5_gate.py
 tests/test_document_contract.py
+tests/test_vlm_worker.py
 ```
 
 `third_party/notebook` 中的云端 `src/pipeline.py` 和 `RocDecodeReader` 保持不变；当前
 工作区通过适配层或带来源记录的复制文件做 replay 回归，不在上游 checkout 内开发。
 
-上述 M0-M2 文件已于 2026-09-08 落地。`ruff` 检查通过，pytest 当前为 13/13 通过；真实
-`CameraReader` 和 15 秒 YOLO 窗口 smoke 也已通过。M3/M4/M5 尚未实现，CLI 虽保留完整参数
-合同，但对 `--backend migraphx`、非 `off` 的 `--record`/`--vlm` 会立即报出明确错误。
+上述 M0-M2 与 M5 文件已于 2026-09-08 落地。`ruff` 检查通过，pytest 当前为 18/18
+通过；真实 `CameraReader`、30 分钟 YOLO 窗口和 30 秒 YOLO + VLM 窗口均已通过。
+`--vlm llamacpp` 现会启动受管的 localhost 服务并执行低频异步字幕；M3/M4 尚未实现，CLI
+仍会对 `--backend migraphx` 和非 `off` 的 `--record` 立即报出明确错误。
 
 ### 9.2 CameraReader
 
@@ -1112,6 +1121,12 @@ uv run --frozen python scripts/run_camera.py \
 --record-path
 --vlm off|llamacpp
 --vlm-interval
+--vlm-server/--vlm-model/--vlm-mmproj
+--vlm-port                               # 0 表示自动选择 localhost 空闲端口
+--vlm-timeout/--vlm-startup-timeout
+--vlm-caption-expiry
+--vlm-context-size/--vlm-image-max-tokens/--vlm-max-tokens
+--vlm-prompt/--vlm-log
 --max-latency-ms
 --metrics-json
 ```
@@ -1157,18 +1172,44 @@ submitted_frames == encoded_frames == packets == decoded_frames
 
 ### 10.3 可选 Qwen3-VL
 
-Qwen 不是实时 YOLO MVP 的一部分；M2 通过后可独立启用，不依赖 M3/M4。先在 395 上原生构建 llama.cpp：
+Qwen 不是实时 YOLO MVP 的一部分；M2 通过后可独立启用，不依赖 M3/M4。本机使用以下
+一键脚本在仓库内下载、构建并校验全部 M5 工件，不写系统 Python 或系统目录：
 
 ```bash
-cmake -S third_party/llama.cpp -B third_party/llama.cpp/build-gfx1151 \
-  -DGGML_HIP=ON \
-  -DAMDGPU_TARGETS=gfx1151 \
-  -DCMAKE_BUILD_TYPE=Release
-cmake --build third_party/llama.cpp/build-gfx1151 -j"${BUILD_JOBS:-8}" \
-  --target llama-server
+bash scripts/setup_vlm_gfx1151.sh
 ```
 
-启动时使用本项目两份 GGUF，保留和云端一致的模型参数；源码 commit 需要在首次目标机验证后写入 `native-lock/manifest.json`，不能只记录模糊 build number。
+脚本锁定 llama.cpp commit `0b1bad14ff204627636aeb1de22ddcd5acb859d4` 和模型仓库 revision
+`b93a7ee713758252c555be4210c00540df954dc2`，CMake 使用
+`GGML_HIP=ON`、`GPU_TARGETS=gfx1151`、`LLAMA_BUILD_UI=OFF` 和
+`LLAMA_USE_PREBUILT_UI=OFF`，并通过 `roc-obj-ls`
+拒绝非 `gfx1151` HIP code object。两份 GGUF 的字节数和 SHA-256 也必须完全一致。
+
+先执行独立 GPU smoke：
+
+```bash
+uv run --frozen --extra vlm python scripts/check_vlm_gpu.py
+```
+
+该 Gate 不只判断 HTTP 200；它还要求 `37/37 layers to GPU`、`CLIP using ROCm0 backend`、
+进程持有 `/dev/kfd`、服务声明 `multimodal` capability，并拒绝 `HSA_OVERRIDE_GFX_VERSION`
+和任意 CPU/部分 offload。本机最终构建的实际请求耗时 2.195 秒，证据写入
+`output/bringup/qwen3-vl-gpu-smoke.json`。
+
+通过后以单命令运行摄像头 + YOLO + VLM：
+
+```bash
+uv run --frozen python scripts/run_camera.py \
+  --device /dev/video0 --fourcc NV12 \
+  --width 1280 --height 720 --camera-fps 30 \
+  --model models/yolo26x.pt --backend pytorch \
+  --display --record off \
+  --vlm llamacpp --vlm-interval 6
+```
+
+程序自行启动只监听 `127.0.0.1` 的随机端口，生成进程内随机 API key，先轮询 `/health`，
+再核验完整 GPU offload 和 multimodal capability；单请求 timeout 为 120 秒。`q`、Esc、
+SIGINT 或 duration 截止时先停止新请求，给在途请求有限收尾时间，再关闭服务和摄像头。
 
 实时接入规则：
 
@@ -1182,6 +1223,17 @@ cmake --build third_party/llama.cpp/build-gfx1151 -j"${BUILD_JOBS:-8}" \
 395 的 GPU 与 CPU 共用内存带宽，Qwen 并发很可能降低 YOLO FPS。不能把云端 W7900 + 独立服务的性能直接套用。
 本分支的“持续”含义是 worker 始终可接收最新快照，但生成频率受 interval 和上一次请求
 完成时间约束；禁止积压请求，也不宣称 30 FPS 逐帧 VLM。
+
+本机初步 on/off 对照如下。两组时长不同（M2 off 为 30 分钟，M5 on 为 30 秒），因此只作为
+当前功能与性能短 Gate，不替代后续同等时长长稳对照：
+
+| 配置 | capture FPS | YOLO FPS | display FPS | display p95 | 平均功耗 | VLM |
+|---|---:|---:|---:|---:|---:|---|
+| VLM off（M2 30 min） | 29.820 | 29.820 | 29.812 | 14.951 ms | 51.294 W | off |
+| VLM on（M5 30 s） | 29.859 | 25.893 | 29.793 | 28.721 ms | 54.248 W | 6/6，均值 2.119 s |
+
+短测中 VLM 并发使 YOLO 吞吐相对 M2 基线下降约 13.2%，但 UI 仍接近 30 FPS，且延迟低于
+150 ms Gate。若长期测试低于目标，应优先增大 `--vlm-interval`，不能改成 CPU fallback。
 
 ## 11. 性能与实时性定义
 
@@ -1296,10 +1348,12 @@ uv run --frozen python scripts/evaluate_m2_metrics.py \
 
 ### M5：Qwen3-VL 异步字幕
 
-- native llama.cpp gfx1151；
-- 独立 worker、latest snapshot；
-- VLM failure isolation；
-- on/off 性能对照。
+- [x] native llama.cpp 的唯一 HIP code object 为 `gfx1151`；
+- [x] Qwen3-VL 8B 主模型 37/37 层和 mmproj 全部使用 `ROCm0`；
+- [x] 独立 worker、latest snapshot depth 1、caption expiry；
+- [x] VLM timeout/failure isolation 与有限时清理；
+- [x] 30 秒真实窗口 on/off 初步性能对照；
+- [ ] VLM on 的 30 分钟长稳 Gate（当前不阻塞短时实时 Demo）。
 
 主线只强制 `M0 -> M1 -> M2`。M2 通过后，M3（GPU 优化）、M4（录制）和 M5（VLM）是
 三个独立分支，可按需求并行或分别验证，彼此不作为前置条件；每个分支失败都必须回到已
@@ -1323,35 +1377,45 @@ vlm_camera_pipeline/
 │   ├── python-wheel-urls.txt
 │   ├── python-wheels.sha256
 │   ├── native-components.json
-│   └── model-sha256.txt
+│   ├── model-sha256.txt
+│   └── vlm-components.json
 ├── src/
 │   ├── __init__.py
 │   ├── camera_io.py
-│   └── realtime_pipeline.py
+│   ├── realtime_pipeline.py
+│   └── vlm.py
 ├── scripts/
 │   ├── check_camera_baseline.py
 │   ├── check_gfx1151_environment.py
 │   ├── check_pytorch_replay.py
+│   ├── check_vlm_gpu.py
 │   ├── evaluate_m2_metrics.py
+│   ├── evaluate_m5_metrics.py
 │   ├── setup_native_gfx1151.sh
+│   ├── setup_vlm_gfx1151.sh
 │   └── run_camera.py
 ├── tests/
 │   ├── test_latest_frame_queue.py
 │   ├── test_camera_replay.py
 │   ├── test_realtime_metrics.py
 │   ├── test_m2_gate.py
-│   └── test_document_contract.py
+│   ├── test_m5_gate.py
+│   ├── test_document_contract.py
+│   └── test_vlm_worker.py
 ├── third_party/
 │   ├── notebook/                 # 锁定 commit 的只读上游参考
 │   ├── ultralytics/              # 锁定 fork
 │   └── llama.cpp/                # M5 可选
 └── output/
     ├── bringup/
-    │   └── camera-baseline-10m.json
+    │   ├── camera-baseline-10m.json
+    │   └── qwen3-vl-gpu-smoke.json
     └── realtime/
         ├── metrics-camera-30m.json
+        ├── metrics-yolo-vlm-display-30s.json
         ├── m2-rss-samples.csv
         ├── m2-gate.json
+        ├── m5-gate.json
         └── screenshots/
 ```
 
@@ -1445,9 +1509,11 @@ VA-API 或 Qwen 失败而把整个部署判为不可用。
 [x] uv 环境中的 Python/PyTorch gfx1151 smoke（2026-09-08）
 [x] yolo26x.pt SHA-256 一致（2026-09-08）
 [x] YOLO26x Route P 真实摄像头 GPU 短基线正确，15 秒窗口 29.61 inference FPS（2026-09-08）
-[x] latest-frame synthetic + 锁定 sidewalk.mp4 replay/metrics/文档合同 tests：13/13 通过（2026-09-08）
+[x] latest-frame/VLM worker synthetic + 锁定 sidewalk.mp4 replay/metrics/文档合同 tests：18/18 通过（2026-09-08）
 [x] camera realtime 30 分钟 Gate：29.820 inference FPS / 14.951 ms display p95 / 0 read failure（2026-09-08）
 [x] M0/M1 environment、metrics、日志与 PyTorch 回放截图归档（2026-09-08）
+[x] VLM：两份 GGUF SHA-256、native llama.cpp、全层/mmproj ROCm0 Gate（2026-09-08）
+[x] YOLO + VLM：30 秒实时窗口、VLM 6/6 成功、0 camera/GPU fault（2026-09-08）
 ```
 
 按需启用：
@@ -1457,7 +1523,7 @@ VA-API 或 Qwen 失败而把整个部署判为不可用。
 [ ] Route M：model metadata/NMS 语义、MIGraphX provider first、GPU I/O Binding、gfx1151 cache identity
 [ ] OpenCV HIP external-pointer/resize Gate；raw one-to-many profile 才增加 GPU NMS Gate
 [ ] VA-API：gfx1151 bridge、12 帧 smoke、长时间计数一致
-[ ] VLM：两份 GGUF SHA-256、native llama.cpp、on/off 性能对照
+[ ] VLM on：30 分钟长稳与同等时长 on/off 性能对照
 ```
 
 ## 16. 交付判定
