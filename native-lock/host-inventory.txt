@@ -1,0 +1,21 @@
+captured_at=2026-09-08T16:43:26+08:00
+host_cpu=AMD Ryzen AI MAX+ PRO 395 w/ Radeon 8060S
+kernel=6.17.0-1030-oem
+gpu_name=AMD Radeon Graphics
+gpu_arch=gfx1151
+gpu_compute_units=40
+rocm_release=7.2.1
+kfd=/dev/kfd readable=true writable=true
+render_node=/dev/dri/renderD128
+camera=/dev/video0 driver=amd_isp_capture
+camera_format=NV12 width=1280 height=720 fps=30
+camera_alternate_format=YUYV
+groups=render,video
+ttm_page_size_bytes=4096
+ttm_pages_limit=20971520
+ttm_bytes_limit=85899345920
+host_memory_bytes=33405952000
+host_swap_bytes=8589930496
+vaapi_driver=radeonsi
+vaapi_h264_encode=true
+python_environment=repository-local-uv-.venv

@@ -1,0 +1,96 @@
+{
+  "detections": [
+    {
+      "class_id": 0,
+      "confidence": 0.967773,
+      "label": "person",
+      "xyxy": [
+        832.5,
+        0.75,
+        1656.0,
+        1069.5
+      ]
+    },
+    {
+      "class_id": 7,
+      "confidence": 0.939941,
+      "label": "truck",
+      "xyxy": [
+        1.5,
+        101.25,
+        515.625,
+        598.5
+      ]
+    },
+    {
+      "class_id": 0,
+      "confidence": 0.921875,
+      "label": "person",
+      "xyxy": [
+        1605.0,
+        0.0,
+        1918.5,
+        999.0
+      ]
+    },
+    {
+      "class_id": 0,
+      "confidence": 0.665527,
+      "label": "person",
+      "xyxy": [
+        635.625,
+        349.125,
+        701.25,
+        433.125
+      ]
+    },
+    {
+      "class_id": 2,
+      "confidence": 0.527344,
+      "label": "car",
+      "xyxy": [
+        588.0,
+        233.625,
+        1695.0,
+        664.5
+      ]
+    }
+  ],
+  "detector": {
+    "backend": "pytorch",
+    "confidence": 0.5,
+    "device": "cuda:0",
+    "external_nms": false,
+    "gpu_arch": "gfx1151",
+    "gpu_name": "AMD Radeon Graphics",
+    "half": true,
+    "hip": "7.2.53211-e1a6bc5663",
+    "image_size": 640,
+    "iou": 0.45,
+    "model_end2end": true,
+    "model_path": "/home/amd/work/vlm_camera_pipeline/models/yolo26x.pt",
+    "model_sha256": "9fdd44a31c504547ffb81d2c6d9e6dac3493c8eaa8b0398d3f43bae6c7003e92",
+    "nms_mode": "auto",
+    "torch": "2.9.1+rocm7.2.1.gitff65f5bc"
+  },
+  "gate": "M1-pytorch-replay-correctness",
+  "passed": true,
+  "schema_version": 1,
+  "screenshot": "/home/amd/work/vlm_camera_pipeline/output/realtime/screenshots/pytorch-replay.jpg",
+  "timing_ms": {
+    "inference": 15.706253005191684,
+    "postprocess": 0.47886400716379285,
+    "preprocess": 1.153099990915507,
+    "wall": 17.976
+  },
+  "video": {
+    "frame_index": 0,
+    "frame_shape": [
+      1080,
+      1920,
+      3
+    ],
+    "path": "/home/amd/work/vlm_camera_pipeline/third_party/notebook/ultralytics_yolo26/data/sidewalk.mp4",
+    "sha256": "0194fb9a4b6590b5ba12e22f32978426efcd89da60ecc285ea9e4f00eb5bc658"
+  }
+}

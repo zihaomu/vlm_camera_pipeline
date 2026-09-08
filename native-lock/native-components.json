@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-08T16:43:26+08:00",
+  "hardware": {
+    "gpu_arch": "gfx1151",
+    "gpu_name": "AMD Radeon Graphics",
+    "host": "AMD Ryzen AI MAX+ PRO 395 w/ Radeon 8060S"
+  },
+  "runtime": {
+    "opencv": "4.11.0",
+    "python": "3.12.3",
+    "rocm": "7.2.1",
+    "torch": "2.9.1+rocm7.2.1.gitff65f5bc",
+    "torchaudio": "2.9.0+rocm7.2.1.gite3c6ee2b",
+    "torchvision": "0.24.0+rocm7.2.1.gitb919bd0c",
+    "triton": "3.5.1+rocm7.2.1.gita272dfa8",
+    "ultralytics": "8.4.75",
+    "uv": "0.11.32"
+  },
+  "python_isolation": {
+    "cache": ".cache/uv",
+    "environment": ".venv",
+    "python_downloads": "never"
+  },
+  "sources": {
+    "notebook_commit": "d9d32c37a29272540937d3ee02b3f8f709046464",
+    "ultralytics_commit": "34e213ca3ece4c18962f5bb922ec74da0c474d24"
+  }
+}

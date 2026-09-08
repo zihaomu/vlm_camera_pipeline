@@ -1,0 +1,31 @@
+{
+  "displayed_frames": 17897,
+  "elapsed_seconds": 600.106,
+  "exit_reason": "duration_elapsed",
+  "frame_interval_ms": {
+    "p50": 33.521699,
+    "p95": 34.062113,
+    "p99": 34.563562
+  },
+  "gate": "M1-camera-baseline",
+  "negotiated": {
+    "fourcc": "NV12",
+    "fps": 30.0,
+    "height": 720,
+    "width": 1280
+  },
+  "observed_latest_frames": 17897,
+  "passed": true,
+  "published_frames": 17899,
+  "read_failures": 0,
+  "requested_duration_seconds": 600.0,
+  "rss_bytes": {
+    "first": 113111040,
+    "growth": 21544960,
+    "last": 134656000,
+    "maximum": 134656000,
+    "samples": 597
+  },
+  "schema_version": 1,
+  "steady_capture_fps": 29.828
+}

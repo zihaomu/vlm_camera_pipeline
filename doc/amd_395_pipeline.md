@@ -1,6 +1,6 @@
 # Ultralytics YOLO26 在 AMD Ryzen AI MAX+ 395（含 PRO 395）上的本地摄像头实时部署方案
 
-> 文档状态：已完成目标机只读可行性核验；尚未安装项目 Python AI 栈或执行 YOLO 推理
+> 文档状态：M0/M1/M2 已通过并归档；PyTorch ROCm 摄像头实时 Demo 可持续运行
 >
 > 编写日期：2026-09-08
 >
@@ -13,6 +13,24 @@
 > 目标硬件：AMD Ryzen AI MAX+ 395 / Ryzen AI MAX+ PRO 395，Radeon 8060S，RDNA 3.5，LLVM target `gfx1151`
 >
 > 部署约束：不使用 Docker/Podman；直接安装到目标机；输入改为本地摄像头；实时显示优先
+
+## 0. 实施进度（持续更新）
+
+当前实施分支：`feature/gfx1151-native-camera`
+
+| 时间 | 里程碑 | 状态 | 本机实测与产物 |
+|---|---|---|---|
+| 2026-09-08 16:29 CST | M0 环境识别门 | **通过** | 安装 `v4l-utils`、`vainfo`；确认 kernel `6.17.0-1030-oem`、`gfx1151`、`/dev/kfd`、`renderD128`、`/dev/video0` 和用户组权限；日志位于 `output/bringup/logs/00-*.log` |
+| 2026-09-08 16:29 CST | M0 内存/摄像头补充核验 | **通过** | TTM `pages_limit=20971520`（4 KiB page，即 80 GiB）；摄像头实际协商 NV12 1280x720@30；FFmpeg 2 秒采集 60 帧；VA-API 可用 H.264 encode |
+| 2026-09-08 16:42 CST | Python 环境隔离策略 | **已执行** | 此时间点前系统依赖已补齐；此后停止所有 sudo/系统 Python 写入，改由仓库 `uv.toml`、`pyproject.toml`、`uv.lock`、`.venv/` 和 `.cache/uv` 独立管理 |
+| 2026-09-08 16:43 CST | M1 uv/PyTorch ROCm | **GPU Gate 通过** | `uv 0.11.32` 在仓库内重建 `.venv`；当前 `uv.lock` 解析 64 包；PyTorch `2.9.1+rocm7.2.1`、HIP `7.2.53211`、`cuda:0=gfx1151` 张量 smoke 通过 |
+| 2026-09-08 16:48 CST | M1 真实 OpenCV 摄像头短测 | **通过** | 新 `CameraReader` 协商 NV12 1280x720@30；5 秒稳态 29.859 FPS、间隔 p50 33.534 ms、0 读取失败 |
+| 2026-09-08 16:51 CST | M2 实时窗口短测 | **通过（非长稳 Gate）** | `yolo26x.pt` SHA 一致；15 秒窗口实测：capture 29.676 FPS、inference 29.610 FPS、display 29.345 FPS、capture-to-display p95 14.837 ms、丢 1 帧、0 读取失败；metrics：`output/realtime/metrics-display-smoke-15s.json` |
+| 2026-09-08 17:04 CST | M1 10 分钟 Camera Gate | **通过** | 600.106 秒、17,899 发布帧、17,897 显示帧、稳态 29.828 FPS、帧间隔 p95 34.062 ms、0 读取失败；RSS 108→128 MiB（增长 20.5 MiB）；`output/bringup/camera-baseline-10m.json` |
+| 2026-09-08 17:04 CST | M1 锁定回放正确性 | **通过** | `sidewalk.mp4` 首帧在 gfx1151/FP16 检出 5 个目标（3 person、truck、car），模型声明 `end2end=true` 且未增加外部 NMS；JSON 与截图位于 `output/realtime/pytorch-replay-*` |
+| 2026-09-08 17:34 CST | M2 30 分钟实时窗口 Gate | **通过** | 1800.130 秒；camera 53,680 帧、inference 53,679 帧、display 53,666 帧；capture/inference/display 29.820/29.820/29.812 FPS；capture-to-display p95 14.951 ms；丢 1 帧、0 读取失败；RSS 峰值增长 9.633 MiB；测试时段 0 个 GPU reset/fault/hang；`output/realtime/m2-gate.json` 14/14 通过 |
+
+进度表只记录已经在本机执行并取得证据的结果；设计目标不会提前标记为完成。运行日志默认不提交 Git，精简后的环境、版本与 SHA 身份写入 `native-lock/` 后提交。
 
 ## 1. 目标、边界与重要结论
 
@@ -45,8 +63,9 @@
 
 ### 1.2 交付范围：先跑通什么
 
-当前工作区只有本文档；release-lock 上游源码尚未取回。该上游基线包含云端 finite-video pipeline，**尚未包含**
-`scripts/run_camera.py`、`src/camera_io.py` 或 `src/realtime_pipeline.py`。因此本文有两层目标：
+落地开始前工作区只有本文档；现在锁定上游已放入忽略的 `third_party/`，本地 M0-M2 代码、
+测试和 uv lock 已写入当前功能分支。上游基线本身仍只包含云端 finite-video pipeline，**不包含**
+本仓库新增的 `scripts/run_camera.py`、`src/camera_io.py` 或 `src/realtime_pipeline.py`。目标分为：
 
 1. **当天可跑的摄像头基线**：安装原生 PyTorch ROCm、Ultralytics 和普通 OpenCV，直接用
    `yolo26x.pt` 打开摄像头，确认 395 GPU 推理和本地窗口正常。
@@ -111,7 +130,7 @@ VLM 时才准备两份 GGUF。
 
 ```text
 1. M0：记录本机 gfx1151、kernel、/dev/kfd、摄像头和用户组
-2. 保留已安装且受支持的 ROCm 7.2.1；在工作区 `.venv` 安装官方 PyTorch 2.9.1 wheel
+2. 保留已安装且受支持的 ROCm 7.2.1；由 uv 在工作区 `.venv` 安装锁定的官方 PyTorch 2.9.1 wheel
 3. 在本工作区取得上游参考源码，checkout d9d32c37...
 4. 安装 pinned Ultralytics fork 和普通 opencv-python
 5. 只下载并校验 yolo26x.pt
@@ -203,18 +222,17 @@ TTM pages limit 为 80 GiB，而 Linux host 侧可见约 31 GiB 内存和 8 GiB 
 先跑 YOLO，但暂不因文档建议修改 BIOS；先完成 M1/M2 实测。若编译 OpenCV、ORT 或
 llama.cpp，默认限制并行度为 `${BUILD_JOBS:-8}`，禁止直接使用 `-j$(nproc)` 耗尽 host 内存。
 
-官方工具示例：
+本机已直接从 sysfs 记录现状，不安装额外的全局 Python 工具：
 
 ```bash
-sudo apt install -y pipx
-pipx ensurepath
-pipx install amd-debug-tools
-amd-ttm
-sudo -H "$(command -v amd-ttm)" --set 64
-sudo reboot
+cat /sys/module/ttm/parameters/pages_limit
+cat /sys/module/ttm/parameters/page_pool_size
+getconf PAGESIZE
 ```
 
-不同安装方式下 `amd-ttm` 的提权调用路径可能不同。执行后必须再次运行 `amd-ttm` 验证，而不是假设写入成功。
+本机结果是 `pages_limit=20971520`、page size 4096 bytes，即 80 GiB。当前不修改 TTM、BIOS
+或系统 Python。若后续必须用 `amd-ttm` 改系统配置，应作为单独的人工授权步骤执行，且执行后
+必须重新读取 sysfs 验证，不能把该系统级变更放进项目初始化脚本。
 
 ### 3.4 本机只读核验快照（2026-09-08）
 
@@ -225,17 +243,18 @@ sudo reboot
 | ROCm/GPU | ROCm 7.2.1；`rocminfo=gfx1151`；40 CU | 通过 |
 | 设备权限 | `/dev/kfd`、`/dev/dri/renderD128` 可访问；用户属于 `render,video` | 通过 |
 | 摄像头 | `/dev/video0`（AMD ISP Preview）；NV12/YUYV；1280x720@30 实采 60 帧 | 通过 |
-| 桌面 | Wayland 会话，XWayland `DISPLAY=:0` 可用 | GUI 条件具备，待 OpenCV 实测 |
-| Python | Python 3.12.3；尚无 torch/cv2/ultralytics/onnxruntime | M1 待执行 |
+| 桌面 | Wayland 会话；OpenCV 通过 XWayland 成功显示并自动关闭 15 秒窗口 | 通过 |
+| Python | 仓库内 uv `.venv`：Python 3.12.3、torch 2.9.1 ROCm、OpenCV 4.11.0、Ultralytics 8.4.75 | M1 GPU Gate 通过 |
 | 存储 | 工作区所在文件系统约 1.6 TiB 可用 | 通过 |
-| 可选录制工具 | FFmpeg 含 `h264_vaapi`；`vainfo` 尚未安装/验证 | 不阻塞 M2 |
+| 可选录制工具 | FFmpeg 含 `h264_vaapi`；`vainfo` 已确认 H.264 EncSlice | M4 前置条件具备，尚未做 bridge Gate |
 
 快照只说明硬件入口具备，不替代 PyTorch GPU smoke、OpenCV GUI 和 30 分钟实时 Gate。
 
 ## 4. M0：目标机环境识别门
 
-当前机器缺少 `v4l2-ctl` 和 `vainfo`。先安装只读盘点所需的小型工具，再执行完整脚本并
-把输出保存在本工作区；不要把工具缺失误判成摄像头或 VA-API 硬件失败：
+首次盘点时机器缺少 `v4l2-ctl` 和 `vainfo`；已于 2026-09-08 16:29 CST 安装并完成正式
+M0 采集。新机器仍应先安装这两个小型工具，再执行完整脚本并把输出保存在本工作区；不要
+把工具缺失误判成摄像头或 VA-API 硬件失败：
 
 ```bash
 sudo apt install -y v4l-utils vainfo
@@ -283,6 +302,9 @@ M0 失败，不能进入模型安装。本机已通过这些核心只读检查�
 ### 5.1 安装系统依赖
 
 本机已有匹配的 amdgpu/ROCm 7.2.1，不重复执行 `amdgpu-install`。只补齐项目依赖：
+
+> 本机已在 2026-09-08 16:31 CST 完成以下一次性依赖补齐。收到 uv-only 隔离要求后，项目
+> 自动化不再执行此命令；`scripts/setup_native_gfx1151.sh` 只检查前置条件并写工作区。
 
 ```bash
 sudo apt install -y \
@@ -336,53 +358,44 @@ dpkg -l | grep -E 'amdgpu|rocm|migraphx' \
   | tee "$WORKSPACE/output/bringup/logs/01-hipcc.log"
 ```
 
-### 5.2 创建独立 Python 环境
+### 5.2 用 uv 创建仓库内独立 Python 环境
+
+本项目唯一支持的 Python 环境工作流是 `uv`。`.venv`、uv cache、Ultralytics 配置、Torch
+cache、Matplotlib cache 和后续 Hugging Face cache 全部留在本仓库的忽略目录中；不使用
+系统 `pip`、`pipx`、用户 site-packages 或全局 Python 环境。`uv.toml` 已设置
+`cache-dir = ".cache/uv"` 和 `python-downloads = "never"`，因此复用系统只读的
+`/usr/bin/python3.12` 解释器，但不向系统解释器安装包。
+
+仓库已提交 `pyproject.toml`、`uv.lock`、`.python-version` 与可重复初始化脚本。新 checkout
+只需在系统已有 ROCm、Python 3.12、uv、Git 和 curl 的前提下执行：
 
 ```bash
-export WORKSPACE=/home/amd/work/vlm_camera_pipeline
-cd "$WORKSPACE"
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip wheel setuptools
-python -m pip install 'numpy<2' 'opencv-python>=4.10,<5'
+cd /home/amd/work/vlm_camera_pipeline
+bash scripts/setup_native_gfx1151.sh
 ```
 
-PyTorch 必须使用 AMD 为 Ryzen APU 发布的 ROCm wheel，不使用通用 PyPI CPU/CUDA wheel。
-本机 ROCm 7.2.1 对应 AMD 官方 PyTorch 2.9.1 / Python 3.12 组合。先把原始 wheel 放到
-工作区 cache，记录 URL 与 SHA，再安装到 `.venv`：
+脚本只写工作区内的 `.cache/`、`.venv/`、`third_party/`、`models/` 与 `native-lock/`；它会：
+
+1. 验证 `rocminfo` 包含 `gfx1151`；
+2. 下载并校验四个 AMD ROCm 7.2.1 wheel；
+3. 检出两个锁定的上游 commit；
+4. 下载并校验 `yolo26x.pt`；
+5. 执行 `uv sync --frozen`、环境 Gate 和单元测试。
+
+本机实际 wheel SHA 已同时写入 `uv.lock` 和 `native-lock/python-wheels.sha256`：
+
+| wheel | SHA-256 |
+|---|---|
+| torch 2.9.1 ROCm 7.2.1 | `fb45ace0a27e9f0d0e3c4c6efd8932162743f8376f2aa4752a4d31ef5a1bd3d7` |
+| torchvision 0.24.0 ROCm 7.2.1 | `d5fca8cda173235a3b7434baeebe04c3ebffec3c6fc191e79aa8aa300633f2c9` |
+| triton 3.5.1 ROCm 7.2.1 | `07787af1d28c273852f897bfeaa7bca29f2fa4a13ca0f28f535832b240ce7016` |
+| torchaudio 2.9.0 ROCm 7.2.1 | `023d1ce5d847b2a0fbebacf52d35b4c7a233ca07b3dbd0f1cbde84362cbcf33d` |
+
+若选择其他 ROCm release，必须建立新的 wheel cache、`pyproject.toml` source pin、`uv.lock`
+和 `.venv`；不能把另一 release 的 wheel 混入当前环境。安装后用 uv 执行 GPU Gate：
 
 ```bash
-export WORKSPACE=/home/amd/work/vlm_camera_pipeline
-mkdir -p "$WORKSPACE/.cache/wheels/rocm7.2.1" "$WORKSPACE/native-lock"
-cd "$WORKSPACE/.cache/wheels/rocm7.2.1"
-
-wget https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1.lw.gitff65f5bc-cp312-cp312-linux_x86_64.whl
-wget https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/torchvision-0.24.0%2Brocm7.2.1.gitb919bd0c-cp312-cp312-linux_x86_64.whl
-wget https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/triton-3.5.1%2Brocm7.2.1.gita272dfa8-cp312-cp312-linux_x86_64.whl
-wget https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/torchaudio-2.9.0%2Brocm7.2.1.gite3c6ee2b-cp312-cp312-linux_x86_64.whl
-
-sha256sum ./*.whl | tee "$WORKSPACE/native-lock/python-wheels.sha256"
-printf '%s\n' \
-  'https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1.lw.gitff65f5bc-cp312-cp312-linux_x86_64.whl' \
-  'https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/torchvision-0.24.0%2Brocm7.2.1.gitb919bd0c-cp312-cp312-linux_x86_64.whl' \
-  'https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/triton-3.5.1%2Brocm7.2.1.gita272dfa8-cp312-cp312-linux_x86_64.whl' \
-  'https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/torchaudio-2.9.0%2Brocm7.2.1.gite3c6ee2b-cp312-cp312-linux_x86_64.whl' \
-  > "$WORKSPACE/native-lock/python-wheel-urls.txt"
-cd "$WORKSPACE"
-python -m pip install \
-  .cache/wheels/rocm7.2.1/torch-2.9.1+rocm7.2.1.lw.gitff65f5bc-cp312-cp312-linux_x86_64.whl \
-  .cache/wheels/rocm7.2.1/torchvision-0.24.0+rocm7.2.1.gitb919bd0c-cp312-cp312-linux_x86_64.whl \
-  .cache/wheels/rocm7.2.1/triton-3.5.1+rocm7.2.1.gita272dfa8-cp312-cp312-linux_x86_64.whl \
-  .cache/wheels/rocm7.2.1/torchaudio-2.9.0+rocm7.2.1.gite3c6ee2b-cp312-cp312-linux_x86_64.whl
-```
-
-若选择其他 ROCm release，必须重新从该 release 的官方页面生成完整 wheel 集与独立 venv；
-不能把历史 nightly wheel 或另一 release 的 wheel 塞进当前 `.venv`。
-
-安装后立即执行：
-
-```bash
-python - <<'PY'
+uv run --frozen python - <<'PY'
 import torch
 print("torch", torch.__version__)
 print("hip", torch.version.hip)
@@ -398,8 +411,8 @@ print("torch gfx1151 smoke", float(x.square().mean()))
 PY
 ```
 
-将 `pip freeze`、上述下载 URL 和 wheel 哈希保存到 `native-lock/`；初次不要凭 W7900
-容器版本猜测兼容组合。
+用 `uv pip freeze`、`uv.lock`、下载 URL 和 wheel 哈希共同记录环境身份；不要凭 W7900
+容器版本猜测兼容组合，也不要用裸 `python`/`pip` 绕过 lock。
 
 ### 5.3 摄像头基线
 
@@ -460,10 +473,7 @@ M1 Gate：摄像头连续预览 10 分钟，无断流、无不断增长的 RSS�
 ```bash
 export WORKSPACE=/home/amd/work/vlm_camera_pipeline
 cd "$WORKSPACE"
-source .venv/bin/activate
-mkdir -p third_party
-git clone https://github.com/zihaomu/notebook.git third_party/notebook
-git -C third_party/notebook checkout d9d32c37a29272540937d3ee02b3f8f709046464
+bash scripts/setup_native_gfx1151.sh
 export UPSTREAM_YOLO26="$WORKSPACE/third_party/notebook/ultralytics_yolo26"
 test -f "$UPSTREAM_YOLO26/src/pipeline.py"
 ```
@@ -474,21 +484,16 @@ test -f "$UPSTREAM_YOLO26/src/pipeline.py"
 865c5871d41af46c5da08b65ea9eb5e5ce16b049
 ```
 
-安装 PyTorch 以外的 Python 依赖，并固定当前 Ultralytics fork。MVP 使用普通
-`opencv-python` 提供 V4L2/GUI；进入第 8 节自编 OpenCV HIP 前再卸载这个 wheel：
+Python 依赖和 Ultralytics fork 都由 `pyproject.toml`/`uv.lock` 固定。MVP 使用普通
+`opencv-python` 提供 V4L2/GUI；不得再用 pip 对 `.venv` 做锁外修改：
 
 ```bash
 cd "$WORKSPACE"
-python -m pip install \
-  'numpy<2' matplotlib pillow pyyaml requests scipy psutil polars \
-  ultralytics-thop av openai
+uv sync --frozen
+test "$(git -C third_party/notebook rev-parse HEAD)" = d9d32c37a29272540937d3ee02b3f8f709046464
+test "$(git -C third_party/ultralytics rev-parse HEAD)" = 34e213ca3ece4c18962f5bb922ec74da0c474d24
 
-mkdir -p third_party
-git clone https://github.com/zihaomu/ultralytics.git third_party/ultralytics
-git -C third_party/ultralytics checkout 34e213ca3ece4c18962f5bb922ec74da0c474d24
-python -m pip install --no-deps --no-build-isolation -e third_party/ultralytics
-
-python - <<'PY'
+uv run --frozen python - <<'PY'
 import cv2, torch, ultralytics
 print("opencv", cv2.__version__)
 print("torch", torch.__version__, torch.version.hip)
@@ -497,15 +502,14 @@ assert torch.cuda.is_available()
 PY
 ```
 
-本地摄像头适配建议创建独立分支：
+本地摄像头适配已在独立分支实施：
 
 ```bash
 git switch -c feature/gfx1151-native-camera
 ```
 
-当前工作区尚无首个 commit，且文档从根目录移动到 `doc/` 后 Git index 尚未整理；应先把
-文档和忽略规则记录为干净基线，再创建功能分支。不要直接在上游只读 checkout 中实现
-摄像头功能。
+基线提交为 `2470fb3`，当前实施分支为 `feature/gfx1151-native-camera`。不要直接在上游
+只读 checkout 中实现摄像头功能。
 
 下载依赖和模型前，`.gitignore` 至少覆盖以下重型/生成目录；小型 metrics JSON、manifest
 和 SHA lock 仍应提交：
@@ -526,8 +530,8 @@ output/**/*.jpg
 output/**/*.png
 ```
 
-不要改动已经发布的云端 finite-video 路径；按第 9 节新增本地入口。当前基线仓库没有
-`run_camera.py`，文档中的最终 CLI 必须在这些新增文件实现后才能使用。
+不要改动已经发布的云端 finite-video 路径。本分支已按第 9 节新增 `scripts/run_camera.py`
+等入口与测试；尚未完成的功能会在参数校验阶段明确拒绝，不会静默回退。
 
 ### 6.2 模型
 
@@ -554,11 +558,11 @@ printf '%s  %s\n' \
   models/yolo26x.onnx | sha256sum -c -
 ```
 
-启用 Qwen3-VL 时再安装 `huggingface_hub` 并下载两份 GGUF：
+启用 Qwen3-VL 时再同步 uv 的 `vlm` extra，并下载两份 GGUF：
 
 ```bash
-python -m pip install huggingface_hub
-hf download \
+uv sync --frozen --extra vlm
+uv run --frozen --extra vlm hf download \
   unsloth/Qwen3-VL-8B-Instruct-GGUF \
   Qwen3-VL-8B-Instruct-Q8_0.gguf mmproj-F16.gguf \
   --local-dir models
@@ -570,7 +574,7 @@ printf '%s  %s\n' \
   models/mmproj-F16.gguf | sha256sum -c -
 ```
 
-仅在 Hugging Face 直连失败时，才为同一条 `hf download` 命令临时设置
+仅在 Hugging Face 直连失败时，才为同一条 `uv run ... hf download` 命令临时设置
 `HF_ENDPOINT=https://hf-mirror.com`；无论从哪里取得，都必须执行上面的 SHA-256 校验。
 
 如果目标机无法直接下载，也可以从已校验开发机按需传输；MVP 不要先搬 Qwen：
@@ -609,8 +613,10 @@ native/build/hip_vaapi_bridge*.so
 
 ```bash
 cd /home/amd/work/vlm_camera_pipeline
-source .venv/bin/activate
-yolo predict \
+YOLO_CONFIG_DIR="$PWD/.cache" \
+TORCH_HOME="$PWD/.cache/torch" \
+MPLCONFIGDIR="$PWD/.cache/matplotlib" \
+uv run --frozen yolo predict \
   model=models/yolo26x.pt \
   source=0 device=0 half=True imgsz=640 \
   conf=0.50 iou=0.45 stream_buffer=False show=True
@@ -658,7 +664,7 @@ NMS-free one-to-one head，也可能来自图内嵌 NMS；shape 本身不能决�
 2. 获取与 Python 3.12、ROCm/MIGraphX 匹配的 `onnxruntime-migraphx` wheel；若没有匹配 wheel，则从 ONNX Runtime 源码构建，不能安装云端 `cp310` wheel；
 3. 检出 Ultralytics fork commit `34e213ca3ece4c18962f5bb922ec74da0c474d24`；
 4. 应用上游参考目录中的 `docker/patches/ultralytics-migraphx-iobinding.patch`；
-5. 使用 `--no-deps` 安装 fork，避免 pip 替换已经验证的 ROCm PyTorch；
+5. fork 已作为 uv editable path source 锁定；应用 patch 后用单独的 M3 lock 更新环境，禁止 pip 绕过 lock；
 6. 运行 provider 和指针复用测试。
 
 示意：
@@ -670,13 +676,13 @@ cd "$WORKSPACE"
 git -C "$WORKSPACE/third_party/ultralytics" checkout 34e213ca3ece4c18962f5bb922ec74da0c474d24
 git -C "$WORKSPACE/third_party/ultralytics" apply \
   "$UPSTREAM_YOLO26/docker/patches/ultralytics-migraphx-iobinding.patch"
-python -m pip install --no-deps --no-build-isolation -e third_party/ultralytics
+uv sync --frozen
 ```
 
 安装 ORT 后的硬门：
 
 ```bash
-python - <<'PY'
+uv run --frozen python - <<'PY'
 import onnxruntime as ort
 print(ort.__version__)
 print(ort.get_available_providers())
@@ -687,7 +693,7 @@ session = ort.InferenceSession(
 print("model_metadata", session.get_modelmeta().custom_metadata_map)
 PY
 
-python tests/test_ultralytics_migraphx_backend.py \
+uv run --frozen python tests/test_ultralytics_migraphx_backend.py \
   --model models/yolo26x.onnx --iterations 100
 ```
 
@@ -717,7 +723,7 @@ if test -e models/ort-migraphx-cache/gfx1151-bringup; then
     "output/realtime/failed-cache/gfx1151-bringup-$(date +%Y%m%d-%H%M%S)"
 fi
 export ULTRALYTICS_MIGRAPHX_CACHE_ROOT="$PWD/models/ort-migraphx-cache"
-python tests/test_ultralytics_migraphx_backend.py \
+uv run --frozen python tests/test_ultralytics_migraphx_backend.py \
   --model models/yolo26x.onnx --iterations 10
 ```
 
@@ -762,12 +768,13 @@ git clone --branch 5.x-hip-zerocopy \
 git -C third_party/opencv_contrib checkout 467cbc6f99aa82ebda39a2e94d6125557bd84d0b
 ```
 
-从当前 Python 3.12 venv 动态获取 include、library 和 site-packages 路径：
+从 uv 管理的 Python 3.12 `.venv` 动态获取 include、library 和 site-packages 路径；不需要
+激活环境：
 
 ```bash
 export WORKSPACE=/home/amd/work/vlm_camera_pipeline
 cd "$WORKSPACE"
-source .venv/bin/activate
+uv sync --frozen
 export OPENCV_INSTALL="$WORKSPACE/.local/opencv5-gfx1151"
 export ROCM_PATH="${ROCM_PATH:-/opt/rocm}"
 export PATH="$ROCM_PATH/bin:$PATH"
@@ -823,7 +830,7 @@ git -C third_party/opencv_contrib rev-parse HEAD > native-lock/opencv_contrib.co
 ```bash
 export PYTHONPATH="$PYTHON_PACKAGES:${PYTHONPATH:-}"
 export LD_LIBRARY_PATH="$OPENCV_INSTALL/lib:$ROCM_PATH/lib:${LD_LIBRARY_PATH:-}"
-python - <<'PY'
+uv run --frozen python - <<'PY'
 import cv2
 print(cv2.__version__)
 print(cv2.cuda.getCudaEnabledDeviceCount())
@@ -873,13 +880,23 @@ src/camera_io.py
 src/realtime_pipeline.py
 scripts/run_camera.py
 scripts/check_gfx1151_environment.py
+scripts/check_camera_baseline.py
+scripts/check_pytorch_replay.py
+scripts/evaluate_m2_metrics.py
+scripts/setup_native_gfx1151.sh
 tests/test_latest_frame_queue.py
 tests/test_camera_replay.py
 tests/test_realtime_metrics.py
+tests/test_m2_gate.py
+tests/test_document_contract.py
 ```
 
 `third_party/notebook` 中的云端 `src/pipeline.py` 和 `RocDecodeReader` 保持不变；当前
 工作区通过适配层或带来源记录的复制文件做 replay 回归，不在上游 checkout 内开发。
+
+上述 M0-M2 文件已于 2026-09-08 落地。`ruff` 检查通过，pytest 当前为 13/13 通过；真实
+`CameraReader` 和 15 秒 YOLO 窗口 smoke 也已通过。M3/M4/M5 尚未实现，CLI 虽保留完整参数
+合同，但对 `--backend migraphx`、非 `off` 的 `--record`/`--vlm` 会立即报出明确错误。
 
 ### 9.2 CameraReader
 
@@ -1054,11 +1071,11 @@ while not stop_requested:
 
 ### 9.5 建议 CLI
 
-注意：锁定上游发布源码还没有 `scripts/run_camera.py`。按 9.1-9.4 在当前工作区实现并通过 replay tests 后，
-默认 PyTorch 命令应为：
+锁定上游发布源码没有 `scripts/run_camera.py`；当前工作区已经按 9.1-9.4 实现并通过 replay
+tests。默认 PyTorch 命令为：
 
 ```bash
-python scripts/run_camera.py \
+uv run --frozen python scripts/run_camera.py \
   --device /dev/video0 \
   --width 1280 --height 720 --camera-fps 30 \
   --model models/yolo26x.pt \
@@ -1072,7 +1089,7 @@ python scripts/run_camera.py \
 只有 Route M 全部门通过后才使用：
 
 ```bash
-python scripts/run_camera.py \
+uv run --frozen python scripts/run_camera.py \
   --device /dev/video0 \
   --width 1280 --height 720 --camera-fps 30 \
   --model models/yolo26x.onnx \
@@ -1205,6 +1222,36 @@ GPU power / temperature
 - PyTorch backend 的 tensor 与 model 均在 `cuda:0`/ROCm，不能静默运行 CPU；
 - 只有选择实验性 Route M 时，ORT 第一 provider 才必须是 MIGraphX。
 
+当前实现用以下命令自动检查时长、三路 FPS、显示 p95、读取失败、丢帧比例、gfx1151、模型
+SHA、NMS/可选支路状态和 RSS 峰值增长；任何一项失败都会返回非零状态：
+
+```bash
+uv run --frozen python scripts/evaluate_m2_metrics.py \
+  --metrics output/realtime/metrics-camera-30m.json \
+  --rss-samples output/realtime/m2-rss-samples.csv \
+  --output output/realtime/m2-gate.json
+```
+
+本机于 2026-09-08 完成正式 M2 Gate，`output/realtime/m2-gate.json` 的 14 项检查全部通过：
+
+| 指标 | 30 分钟实测 |
+|---|---:|
+| 稳定运行时长 | 1800.130 秒 |
+| camera / inference / display 帧数 | 53,680 / 53,679 / 53,666 |
+| capture / inference / display FPS | 29.820 / 29.820 / 29.812 |
+| capture-to-infer p50 / p95 / p99 | 17.877 / 19.091 / 19.826 ms |
+| capture-to-display p50 / p95 / p99 | 12.964 / 14.951 / 16.494 ms |
+| 跳过帧 / camera read failure | 1 / 0 |
+| RSS 峰值增长（外部采样） | 9.633 MiB |
+| GPU power mean / p95 / p99 | 51.294 / 53.005 / 53.060 W |
+| GPU temperature mean / p95 / p99 | 62.607 / 65.000 / 65.000 °C |
+| 测试时段 kernel GPU reset/fault/hang | 0 |
+
+该结果使用 `yolo26x.pt`、FP16、`cuda:0` ROCm compatibility API、`gfx1151`，模型
+`end2end=true`，应用未增加外部 NMS；录制与 VLM 支路均关闭。完整原始 metrics 保存在
+`output/realtime/metrics-camera-30m.json`，RSS 原始样本保存在
+`output/realtime/m2-rss-samples.csv`。
+
 面向现场展示的实时 profile 必须另行满足处理 FPS >= 25；若 `yolo26x` 未达到，允许明确
 切换到已锁定身份的 `yolo26s/n` 或隔帧推理。交付物同时保留 `x` 的真实性能和展示 profile，
 不能用模型切换掩盖基准结果。
@@ -1262,33 +1309,50 @@ GPU power / temperature
 
 ```text
 vlm_camera_pipeline/
+├── README.md
+├── pyproject.toml
+├── uv.lock
+├── uv.toml
+├── .python-version
 ├── doc/
 │   └── amd_395_pipeline.md
 ├── native-lock/
+│   ├── environment.json
 │   ├── host-inventory.txt
 │   ├── python-freeze.txt
+│   ├── python-wheel-urls.txt
+│   ├── python-wheels.sha256
 │   ├── native-components.json
 │   └── model-sha256.txt
 ├── src/
+│   ├── __init__.py
 │   ├── camera_io.py
 │   └── realtime_pipeline.py
 ├── scripts/
+│   ├── check_camera_baseline.py
 │   ├── check_gfx1151_environment.py
+│   ├── check_pytorch_replay.py
+│   ├── evaluate_m2_metrics.py
 │   ├── setup_native_gfx1151.sh
 │   └── run_camera.py
 ├── tests/
 │   ├── test_latest_frame_queue.py
 │   ├── test_camera_replay.py
-│   └── test_realtime_metrics.py
+│   ├── test_realtime_metrics.py
+│   ├── test_m2_gate.py
+│   └── test_document_contract.py
 ├── third_party/
 │   ├── notebook/                 # 锁定 commit 的只读上游参考
 │   ├── ultralytics/              # 锁定 fork
 │   └── llama.cpp/                # M5 可选
-└── output/realtime/
-    ├── metrics.json
-    ├── environment.json
-    ├── smoke.mp4
-    └── screenshots/
+└── output/
+    ├── bringup/
+    │   └── camera-baseline-10m.json
+    └── realtime/
+        ├── metrics-camera-30m.json
+        ├── m2-rss-samples.csv
+        ├── m2-gate.json
+        └── screenshots/
 ```
 
 摄像头硬件难以放进 CI，因此增加 replay mode：从锁定上游的 `data/sidewalk.mp4` 复制一份
@@ -1315,7 +1379,7 @@ mkdir -p "$FAIL_DIR"
   rocm-smi --showproductname --showmeminfo vram --showuse
   v4l2-ctl --device=/dev/video0 --all
   vainfo
-  python -m pip freeze
+  uv pip freeze
 } > "$FAIL_DIR/environment.txt" 2>&1
 journalctl -k -b --no-pager | grep -Ei 'amdgpu|kfd|gpu reset|fault' \
   > "$FAIL_DIR/kernel-amdgpu.log" || true
@@ -1331,8 +1395,9 @@ journalctl -k -b --no-pager | grep -Ei 'amdgpu|kfd|gpu reset|fault' \
 2. **MIGraphX 回滚到 PyTorch**：改为
    `--backend pytorch --model models/yolo26x.pt`；把失败 cache 移到带时间戳的
    `output/realtime/failed-cache/`，不要覆盖证据。
-3. **OpenCV HIP 回滚到普通 OpenCV**：开启新 shell，只激活 `.venv`，不导出自编
-   `PYTHONPATH/LD_LIBRARY_PATH`，先恢复 `yolo predict source=0` 基线。
+3. **OpenCV HIP 回滚到普通 OpenCV**：开启新 shell，不导出自编 `PYTHONPATH/LD_LIBRARY_PATH`，
+   执行 `uv sync --frozen` 后，以 `uv run --frozen python scripts/run_camera.py` 加
+   `--backend pytorch --record off --vlm off` 恢复基线。
 4. **用发布源码做隔离回归**：从只读上游 checkout 建立独立 worktree，不覆盖当前项目代码：
 
    ```bash
@@ -1374,15 +1439,15 @@ VA-API 或 Qwen 失败而把整个部署判为不可用。
 [x] rocminfo 确认 gfx1151（2026-09-08）
 [x] kernel 版本达到要求：6.17.0-1030-oem（2026-09-08）
 [x] render/video 用户组生效（2026-09-08）
-[ ] TTM/GTT 配置与系统内存记录完成
+[x] TTM/GTT 配置与系统内存记录完成：80 GiB pages limit / 31 GiB host（2026-09-08）
 [x] 摄像头 NV12 720p30 无保存采集 2 秒 / 60 帧（2026-09-08）
-[ ] 摄像头 720p30 连续预览 10 分钟
-[ ] Python/PyTorch gfx1151 smoke
-[ ] yolo26x.pt SHA-256 一致
-[ ] yolo predict source=0 的 PyTorch GPU 基线正确
-[ ] latest-frame replay test
-[ ] camera realtime 30 分钟 Gate
-[ ] environment/metrics/logs/screenshots 归档
+[x] 摄像头 720p30 连续预览 10 分钟：29.828 FPS / 0 read failure（2026-09-08）
+[x] uv 环境中的 Python/PyTorch gfx1151 smoke（2026-09-08）
+[x] yolo26x.pt SHA-256 一致（2026-09-08）
+[x] YOLO26x Route P 真实摄像头 GPU 短基线正确，15 秒窗口 29.61 inference FPS（2026-09-08）
+[x] latest-frame synthetic + 锁定 sidewalk.mp4 replay/metrics/文档合同 tests：13/13 通过（2026-09-08）
+[x] camera realtime 30 分钟 Gate：29.820 inference FPS / 14.951 ms display p95 / 0 read failure（2026-09-08）
+[x] M0/M1 environment、metrics、日志与 PyTorch 回放截图归档（2026-09-08）
 ```
 
 按需启用：

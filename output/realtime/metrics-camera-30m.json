@@ -1,0 +1,123 @@
+{
+  "backend": "pytorch",
+  "camera_format": {
+    "fourcc": "NV12",
+    "fps": 30.0,
+    "height": 720,
+    "width": 1280
+  },
+  "camera_frames": 53680,
+  "camera_read_failures": 0,
+  "capture_fps": 29.82,
+  "detector": {
+    "backend": "pytorch",
+    "confidence": 0.5,
+    "device": "cuda:0",
+    "external_nms": false,
+    "gpu_arch": "gfx1151",
+    "gpu_name": "AMD Radeon Graphics",
+    "half": true,
+    "hip": "7.2.53211-e1a6bc5663",
+    "image_size": 640,
+    "iou": 0.45,
+    "model_end2end": true,
+    "model_path": "/home/amd/work/vlm_camera_pipeline/models/yolo26x.pt",
+    "model_sha256": "9fdd44a31c504547ffb81d2c6d9e6dac3493c8eaa8b0398d3f43bae6c7003e92",
+    "nms_mode": "auto",
+    "torch": "2.9.1+rocm7.2.1.gitff65f5bc"
+  },
+  "display_fps": 29.812,
+  "displayed_frames": 53666,
+  "dropped_frames": 1,
+  "elapsed_seconds": 1800.13,
+  "exit_reason": "duration_elapsed",
+  "gpu_power_watts": {
+    "count": 1790,
+    "mean": 51.294,
+    "p50": 51.078,
+    "p95": 53.005,
+    "p99": 53.06
+  },
+  "gpu_temperature_c": {
+    "count": 1790,
+    "mean": 62.607,
+    "p50": 63.0,
+    "p95": 65.0,
+    "p99": 65.0
+  },
+  "inference_fps": 29.82,
+  "latency_ms": {
+    "capture_to_display": {
+      "count": 53666,
+      "mean": 13.005,
+      "p50": 12.964,
+      "p95": 14.951,
+      "p99": 16.494
+    },
+    "capture_to_infer": {
+      "count": 53679,
+      "mean": 17.914,
+      "p50": 17.877,
+      "p95": 19.091,
+      "p99": 19.826
+    },
+    "display": {
+      "count": 53666,
+      "mean": 11.106,
+      "p50": 11.164,
+      "p95": 12.75,
+      "p99": 14.005
+    },
+    "external_nms": {
+      "count": 0,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null
+    },
+    "inference": {
+      "count": 53679,
+      "mean": 15.242,
+      "p50": 15.204,
+      "p95": 16.109,
+      "p99": 16.648
+    },
+    "postprocess": {
+      "count": 53679,
+      "mean": 0.464,
+      "p50": 0.455,
+      "p95": 0.581,
+      "p99": 0.729
+    },
+    "preprocess": {
+      "count": 53679,
+      "mean": 1.124,
+      "p50": 1.091,
+      "p95": 1.58,
+      "p99": 1.726
+    }
+  },
+  "pipeline": {
+    "display": true,
+    "display_mode": "live",
+    "max_latency_ms": 150.0,
+    "warmup_iterations": 2
+  },
+  "process_rss_bytes": {
+    "count": 1790,
+    "current": 1915219968,
+    "maximum": 1942171648
+  },
+  "processed_frames": 53679,
+  "record": {
+    "mode": "off",
+    "queue_depth": 0
+  },
+  "schema_version": 1,
+  "skipped_before_inference": 1,
+  "vlm": {
+    "failures": 0,
+    "mode": "off",
+    "requests": 0
+  }
+}

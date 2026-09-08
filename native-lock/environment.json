@@ -1,0 +1,88 @@
+{
+  "camera": {
+    "device": "/dev/video0",
+    "exists": true,
+    "readable": true,
+    "v4l2_query": {
+      "ok": true,
+      "output": "Format Video Capture:\n\tWidth/Height      : 1280/720\n\tPixel Format      : 'NV12' (Y/UV 4:2:0)\n\tField             : None\n\tBytes per Line    : 1280\n\tSize Image        : 1382400\n\tColorspace        : sRGB\n\tTransfer Function : Default (maps to sRGB)\n\tYCbCr/HSV Encoding: Default (maps to ITU-R 601)\n\tQuantization      : Default (maps to Limited Range)\n\tFlags             :",
+      "returncode": 0
+    },
+    "writable": true
+  },
+  "captured_at": "2026-09-08T17:41:28+08:00",
+  "devices": {
+    "kfd": {
+      "exists": true,
+      "readable": true,
+      "writable": true
+    },
+    "render_nodes": [
+      "/dev/dri/renderD128"
+    ]
+  },
+  "gate": {
+    "failures": [],
+    "passed": true
+  },
+  "groups": [
+    "adm",
+    "amd",
+    "cdrom",
+    "dip",
+    "docker",
+    "lpadmin",
+    "ollama",
+    "plugdev",
+    "render",
+    "sudo",
+    "users",
+    "video"
+  ],
+  "hostname": "amd-HP-ZBook-Ultra",
+  "kernel": "6.17.0-1030-oem",
+  "os": "Linux-6.17.0-1030-oem-x86_64-with-glibc2.39",
+  "python": "3.12.3",
+  "python_packages": {
+    "numpy": {
+      "available": true,
+      "version": "1.26.4"
+    },
+    "opencv": {
+      "available": true,
+      "version": "4.11.0"
+    },
+    "torch": {
+      "available": true,
+      "cuda_available": true,
+      "device_count": 1,
+      "device_name": "AMD Radeon Graphics",
+      "gcn_arch": "gfx1151",
+      "hip": "7.2.53211-e1a6bc5663",
+      "version": "2.9.1+rocm7.2.1.gitff65f5bc"
+    },
+    "ultralytics": {
+      "available": true,
+      "version": "8.4.75"
+    }
+  },
+  "rocm": {
+    "architectures": [
+      "gfx11",
+      "gfx1151"
+    ],
+    "rocm_smi": {
+      "ok": true,
+      "output": "============================ ROCm System Management Interface ============================\n================================== Memory Usage (Bytes) ==================================\nGPU[0]\t\t: VRAM Total Memory (B): 103079215104\nGPU[0]\t\t: VRAM Total Used Memory (B): 1890131968\n==========================================================================================\n====================================== Product Info ======================================\nGPU[0]\t\t: Card Series: \t\tAMD Radeon Graphics\nGPU[0]\t\t: Card Model: \t\t0x1586\nGPU[0]\t\t: Card Vendor: \t\tAdvanced Micro Devices, Inc. [AMD/ATI]\nGPU[0]\t\t: Card SKU: \t\tSTRXLGEN\nGPU[0]\t\t: Subsystem ID: \t-0x72ff\nGPU[0]\t\t: Device Rev: \t\t0xd1\nGPU[0]\t\t: Node ID: \t\t1\nGPU[0]\t\t: GUID: \t\t224\nGPU[0]\t\t: GFX Version: \t\tgfx1151\n==========================================================================================\n================================== End of ROCm SMI Log ===================================",
+      "returncode": 0
+    },
+    "rocminfo_ok": true
+  },
+  "schema_version": 1,
+  "ttm": {
+    "bytes_limit": 85899345920,
+    "page_pool_size": 4077875,
+    "page_size_bytes": 4096,
+    "pages_limit": 20971520
+  }
+}

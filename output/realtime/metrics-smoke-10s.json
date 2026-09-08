@@ -1,0 +1,100 @@
+{
+  "backend": "pytorch",
+  "camera_format": {
+    "fourcc": "NV12",
+    "fps": 30.0,
+    "height": 720,
+    "width": 1280
+  },
+  "camera_frames": 299,
+  "camera_read_failures": 0,
+  "capture_fps": 29.565,
+  "display_fps": 0.0,
+  "displayed_frames": 0,
+  "dropped_frames": 62,
+  "elapsed_seconds": 10.113,
+  "exit_reason": "duration_elapsed",
+  "gpu_power_watts": {
+    "count": 10,
+    "mean": 42.246,
+    "p50": 43.029,
+    "p95": 46.171,
+    "p99": 46.898
+  },
+  "gpu_temperature_c": {
+    "count": 10,
+    "mean": 57.3,
+    "p50": 58.0,
+    "p95": 59.0,
+    "p99": 59.0
+  },
+  "inference_fps": 23.434,
+  "latency_ms": {
+    "capture_to_display": {
+      "count": 0,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null
+    },
+    "capture_to_infer": {
+      "count": 237,
+      "mean": 25.709,
+      "p50": 16.749,
+      "p95": 18.165,
+      "p99": 19.557
+    },
+    "display": {
+      "count": 0,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null
+    },
+    "external_nms": {
+      "count": 0,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null
+    },
+    "inference": {
+      "count": 237,
+      "mean": 22.881,
+      "p50": 14.062,
+      "p95": 15.022,
+      "p99": 15.437
+    },
+    "postprocess": {
+      "count": 237,
+      "mean": 0.53,
+      "p50": 0.438,
+      "p95": 0.545,
+      "p99": 0.667
+    },
+    "preprocess": {
+      "count": 237,
+      "mean": 1.218,
+      "p50": 1.205,
+      "p95": 1.638,
+      "p99": 2.054
+    }
+  },
+  "process_rss_bytes": {
+    "count": 10,
+    "current": 2287394816,
+    "maximum": 2298646528
+  },
+  "processed_frames": 237,
+  "record": {
+    "mode": "off",
+    "queue_depth": 0
+  },
+  "schema_version": 1,
+  "skipped_before_inference": 62,
+  "vlm": {
+    "failures": 0,
+    "mode": "off",
+    "requests": 0
+  }
+}

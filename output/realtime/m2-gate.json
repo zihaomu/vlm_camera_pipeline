@@ -1,0 +1,94 @@
+{
+  "checks": [
+    {
+      "actual": "duration_elapsed",
+      "expected": "duration_elapsed",
+      "name": "clean_duration_exit",
+      "passed": true
+    },
+    {
+      "actual": 1800.13,
+      "expected": ">= 1790.0",
+      "name": "duration_seconds",
+      "passed": true
+    },
+    {
+      "actual": 0,
+      "expected": "0",
+      "name": "camera_read_failures",
+      "passed": true
+    },
+    {
+      "actual": 29.82,
+      "expected": ">= 25.0",
+      "name": "capture_fps",
+      "passed": true
+    },
+    {
+      "actual": 29.82,
+      "expected": ">= 25.0",
+      "name": "inference_fps",
+      "passed": true
+    },
+    {
+      "actual": 29.812,
+      "expected": ">= 25.0",
+      "name": "display_fps",
+      "passed": true
+    },
+    {
+      "actual": 14.951,
+      "expected": "<= 150.0",
+      "name": "capture_to_display_p95_ms",
+      "passed": true
+    },
+    {
+      "actual": 1.9e-05,
+      "expected": "<= 0.20 (latest-frame dropping is allowed)",
+      "name": "drop_fraction",
+      "passed": true
+    },
+    {
+      "actual": "gfx1151",
+      "expected": "gfx1151*",
+      "name": "gpu_arch",
+      "passed": true
+    },
+    {
+      "actual": "cuda:0",
+      "expected": "cuda:0 (ROCm compatibility API)",
+      "name": "gpu_device",
+      "passed": true
+    },
+    {
+      "actual": "9fdd44a31c504547ffb81d2c6d9e6dac3493c8eaa8b0398d3f43bae6c7003e92",
+      "expected": "9fdd44a31c504547ffb81d2c6d9e6dac3493c8eaa8b0398d3f43bae6c7003e92",
+      "name": "model_sha256",
+      "passed": true
+    },
+    {
+      "actual": false,
+      "expected": "false for end-to-end YOLO26 Route P",
+      "name": "external_nms",
+      "passed": true
+    },
+    {
+      "actual": {
+        "record": "off",
+        "vlm": "off"
+      },
+      "expected": "record=off, vlm=off",
+      "name": "optional_branches_off",
+      "passed": true
+    },
+    {
+      "actual": 10100736,
+      "expected": "<= 134217728 (128 MiB)",
+      "name": "rss_growth_bytes",
+      "passed": true
+    }
+  ],
+  "gate": "M2-realtime-camera",
+  "passed": true,
+  "schema_version": 1
+}
