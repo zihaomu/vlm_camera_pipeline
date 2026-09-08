@@ -1,0 +1,36 @@
+# Python environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Downloaded toolchains, dependencies, and build outputs
+.cache/
+.toolchains/
+.local/
+build/
+dist/
+third_party/
+native/build*/
+
+# Model weights and generated inference caches
+models/*.pt
+models/*.onnx
+models/*.gguf
+models/ort-migraphx-cache/
+
+# Large runtime artifacts; keep small JSON manifests and metrics trackable
+output/**/*.log
+output/**/*.mp4
+output/**/*.mkv
+output/**/*.jpg
+output/**/*.jpeg
+output/**/*.png
+
+# Editor and OS metadata
+.idea/
+.vscode/
+.DS_Store
