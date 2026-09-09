@@ -76,6 +76,7 @@ def test_documented_vlm_only_demo_contract_is_present() -> None:
         "--vlm-mmproj",
         "--subtitle-height",
         "--subtitle-font",
+        "--window-scale",
         "--duration-seconds",
         "--metrics-json",
     }

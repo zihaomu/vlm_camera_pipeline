@@ -9,7 +9,12 @@ import numpy as np
 
 from scripts.run_vlm_demo import build_parser
 from src.camera_io import CameraConfig, CameraReader, VideoFileConfig, VideoFileReader
-from src.realtime_pipeline import PipelineConfig, RealtimePipeline, draw_vlm_subtitle_frame
+from src.realtime_pipeline import (
+    PipelineConfig,
+    RealtimePipeline,
+    _resize_display_window,
+    draw_vlm_subtitle_frame,
+)
 from src.vlm import VlmCaption
 
 
@@ -87,7 +92,22 @@ def test_vlm_demo_parser_defaults_to_smooth_three_second_refresh() -> None:
 
     assert args.vlm_interval == 3.0
     assert args.display is True
+    assert args.window_scale == 0.75
     assert "中文" in args.vlm_prompt
+
+
+def test_window_scale_resizes_the_combined_video_and_subtitle_canvas() -> None:
+    class FakeCv2:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, int, int]] = []
+
+        def resizeWindow(self, name: str, width: int, height: int) -> None:
+            self.calls.append((name, width, height))
+
+    cv2_api = FakeCv2()
+    _resize_display_window(cv2_api, "demo", (900, 1280, 3), 0.75)
+
+    assert cv2_api.calls == [("demo", 960, 675)]
 
 
 def test_subtitle_panel_is_below_video_and_supports_chinese() -> None:

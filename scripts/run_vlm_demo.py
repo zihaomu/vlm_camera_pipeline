@@ -90,6 +90,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
     )
     parser.add_argument(
+        "--window-scale",
+        type=float,
+        default=0.75,
+        help="Initial window scale; the resizable window also supports +/- and 0 keys",
+    )
+    parser.add_argument(
         "--duration-seconds",
         type=float,
         default=None,
@@ -119,6 +125,8 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.error("--vlm-port must be between 0 and 65535")
     if args.subtitle_height < 120:
         parser.error("--subtitle-height must be at least 120")
+    if not 0.25 <= args.window_scale <= 2.0:
+        parser.error("--window-scale must be between 0.25 and 2.0")
     if args.duration_seconds is not None and args.duration_seconds <= 0:
         parser.error("--duration-seconds must be positive when provided")
 
@@ -182,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
             vlm_caption_expiry_seconds=args.vlm_caption_expiry,
             subtitle_panel_height=args.subtitle_height,
             subtitle_font_path=args.subtitle_font,
+            window_scale=args.window_scale,
             window_name="Qwen3-VL Realtime Camera Subtitles",
         ),
         vlm_engine=vlm_engine,

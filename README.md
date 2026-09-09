@@ -57,7 +57,7 @@ uv run --frozen --extra vlm python scripts/check_vlm_gpu.py
 uv run --frozen python scripts/run_vlm_demo.py \
   --device /dev/video0 --fourcc NV12 \
   --width 1280 --height 720 --camera-fps 30 \
-  --vlm-interval 3
+  --vlm-interval 3 --window-scale 0.75
 ```
 
 也可用仓库内锁定视频循环演示；它按视频原始 25 FPS 播放，不会高速读取：
@@ -70,7 +70,9 @@ uv run --frozen python scripts/run_vlm_demo.py \
 
 两种纯 VLM 模式都不会构造 YOLO/PyTorch detector。视频持续播放，VLM 独立读取深度为 1 的
 最新快照；上一条字幕保留到新字幕就绪，并显示“正在理解”状态。按 `q`、Esc 或 `Ctrl+C`
-退出。
+退出。窗口默认按原始画布的 75% 创建，可直接拖拽边框缩放；窗口聚焦时按 `+`/`-` 可逐级
+放大/缩小，按 `0` 回到 `--window-scale` 指定的初始比例。如果仍受屏幕空间限制，可改用
+`--window-scale 0.6`。
 
 本机 `amd_isp_capture` 在重复开关摄像头后存在偶发不发布首帧的已知问题；循环视频入口不受
 影响。摄像头 15 秒短测已通过，但在驱动恢复完成长期验证前不宣称摄像头长稳通过，细节见

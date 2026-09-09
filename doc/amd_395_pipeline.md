@@ -33,6 +33,7 @@
 | 2026-09-08 19:26 CST | M5 YOLO + VLM 实时窗口 Gate | **通过（30 秒短测）** | 30.008 秒；capture/inference/display 29.859/25.893/29.793 FPS，capture-to-display p95 28.721 ms，0 camera failure；VLM 6/6 成功、0 失败、请求均值 2.119 秒、queue depth 1；0 GPU reset/fault/hang；`output/realtime/m5-gate.json` 25/25 通过 |
 | 2026-09-09 11:18 CST | M5 纯 VLM 中文字幕摄像头 Demo | **通过（15 秒短测）** | YOLO 未加载（detector=`off/loaded=false`）；NV12 720p30 capture/display 29.878/28.081 FPS，显示 422/449 帧，display p95 67.964 ms；VLM 6/6 成功、0 失败、均值 1.649 秒；固定视频下方 Unicode 字幕面板；`output/realtime/metrics-vlm-camera-display-15s.json` |
 | 2026-09-09 11:16 CST | M5 纯 VLM 循环视频 Demo | **通过（15 秒短测）** | 锁定 `sidewalk.mp4` 按原始 25 FPS 实时播放；capture/display 25.013/24.681 FPS，显示 371/376 帧；VLM 6/6 成功、均值 1.761 秒；`output/realtime/metrics-vlm-video-display-15s.json` |
+| 2026-09-09 11:26 CST | M5 字幕窗口缩放复测 | **通过（12 秒短测）** | 窗口改为可拖拽缩放，默认 `window_scale=0.75`；窗口管理器实测内容约 960×675，底部字幕完整位于 2880×1800 HiDPI 屏幕内；capture/display 25.033/24.950 FPS、显示 300/301 帧、VLM 5/5；`output/realtime/metrics-vlm-resizable-smoke.json` |
 
 进度表只记录已经在本机执行并取得证据的结果；设计目标不会提前标记为完成。运行日志默认不提交 Git，精简后的环境、版本与 SHA 身份写入 `native-lock/` 后提交。
 
@@ -1366,7 +1367,7 @@ cd /home/amd/work/vlm_camera_pipeline
 uv run --frozen python scripts/run_vlm_demo.py \
   --device /dev/video0 --fourcc NV12 \
   --width 1280 --height 720 --camera-fps 30 \
-  --vlm-interval 3
+  --vlm-interval 3 --window-scale 0.75
 ```
 
 摄像头不可用时可以用锁定视频按原始帧率循环验证完整 UI：
@@ -1381,6 +1382,10 @@ uv run --frozen python scripts/run_vlm_demo.py \
 视频帧；VLM worker 每 3 秒最多提交一次最新快照，请求执行期间保留上一条字幕。视频下方
 固定 180 px 深色面板使用 Noto Sans CJK 显示中文，文字面板仅在字幕/状态改变或每秒状态
 刷新时重绘，避免 Unicode 渲染拖慢每一帧。
+
+窗口使用 OpenCV `WINDOW_NORMAL | WINDOW_KEEPRATIO`，因此可拖拽边框并保持“视频+字幕”整体
+比例。默认 `--window-scale 0.75`；窗口聚焦时 `+`/`-` 每次调整 0.1，`0` 恢复启动比例。
+缩放只影响展示尺寸，不会改变送入 VLM 的 1280×720 最新帧。
 
 已知摄像头边界（2026-09-09）：本机 `amd_isp_capture` 在多次打开/关闭后偶发进入设备节点
 仍存在、格式查询正常但不再发布首帧的状态。确认无进程持有 `/dev/video0` 后，仅重载
@@ -1450,6 +1455,7 @@ vlm_camera_pipeline/
         ├── metrics-yolo-vlm-display-30s.json
         ├── metrics-vlm-camera-display-15s.json
         ├── metrics-vlm-video-display-15s.json
+        ├── metrics-vlm-resizable-smoke.json
         ├── m2-rss-samples.csv
         ├── m2-gate.json
         ├── m5-gate.json
@@ -1546,7 +1552,7 @@ VA-API 或 Qwen 失败而把整个部署判为不可用。
 [x] uv 环境中的 Python/PyTorch gfx1151 smoke（2026-09-08）
 [x] yolo26x.pt SHA-256 一致（2026-09-08）
 [x] YOLO26x Route P 真实摄像头 GPU 短基线正确，15 秒窗口 29.61 inference FPS（2026-09-08）
-[x] latest-frame/VLM worker synthetic + 锁定 sidewalk.mp4 replay/metrics/文档合同 tests：23/23 通过（2026-09-09）
+[x] latest-frame/VLM worker synthetic + 锁定 sidewalk.mp4 replay/metrics/文档合同 tests：24/24 通过（2026-09-09）
 [x] camera realtime 30 分钟 Gate：29.820 inference FPS / 14.951 ms display p95 / 0 read failure（2026-09-08）
 [x] M0/M1 environment、metrics、日志与 PyTorch 回放截图归档（2026-09-08）
 [x] VLM：两份 GGUF SHA-256、native llama.cpp、全层/mmproj ROCm0 Gate（2026-09-08）

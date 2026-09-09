@@ -672,6 +672,7 @@ class PipelineConfig:
     vlm_caption_expiry_seconds: float = 15.0
     subtitle_panel_height: int = 180
     subtitle_font_path: str = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
+    window_scale: float = 1.0
     window_name: str = "YOLO26 on Ryzen AI MAX+ 395"
 
     def __post_init__(self) -> None:
@@ -691,6 +692,8 @@ class PipelineConfig:
             raise ValueError("vlm_caption_expiry_seconds must be positive")
         if self.subtitle_panel_height < 120:
             raise ValueError("subtitle_panel_height must be at least 120 pixels")
+        if not 0.25 <= self.window_scale <= 2.0:
+            raise ValueError("window_scale must be between 0.25 and 2.0")
 
 
 class RealtimePipeline:
@@ -850,6 +853,7 @@ class RealtimePipeline:
                 "warmup_iterations": self.config.warmup_iterations,
                 "vlm_interval_seconds": self.config.vlm_interval_seconds,
                 "vlm_caption_expiry_seconds": self.config.vlm_caption_expiry_seconds,
+                "window_scale": self.config.window_scale,
             }
             if self.vlm_engine is not None:
                 metrics["vlm"]["runtime"] = self.vlm_engine.runtime_info()
@@ -868,6 +872,8 @@ class RealtimePipeline:
         last_processed_sequence = -1
         next_report = time.monotonic() + 1.0
         started = time.monotonic()
+        window_initialized = False
+        runtime_window_scale = self.config.window_scale
         subtitle_renderer = (
             VlmSubtitleRenderer(
                 panel_height=self.config.subtitle_panel_height,
@@ -952,6 +958,18 @@ class RealtimePipeline:
                         ),
                         caption=caption,
                     )
+                if not window_initialized:
+                    cv2.namedWindow(
+                        self.config.window_name,
+                        cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO | cv2.WINDOW_GUI_NORMAL,
+                    )
+                    _resize_display_window(
+                        cv2,
+                        self.config.window_name,
+                        preview.shape,
+                        runtime_window_scale,
+                    )
+                    window_initialized = True
                 display_started_ns = time.monotonic_ns()
                 cv2.imshow(self.config.window_name, preview)
                 key = cv2.waitKey(1) & 0xFF
@@ -963,6 +981,30 @@ class RealtimePipeline:
                 )
                 if key in {ord("q"), 27}:
                     return "user_exit"
+                if key in {ord("+"), ord("=")}:
+                    runtime_window_scale = min(2.0, runtime_window_scale + 0.1)
+                    _resize_display_window(
+                        cv2,
+                        self.config.window_name,
+                        preview.shape,
+                        runtime_window_scale,
+                    )
+                elif key in {ord("-"), ord("_")}:
+                    runtime_window_scale = max(0.25, runtime_window_scale - 0.1)
+                    _resize_display_window(
+                        cv2,
+                        self.config.window_name,
+                        preview.shape,
+                        runtime_window_scale,
+                    )
+                elif key == ord("0"):
+                    runtime_window_scale = self.config.window_scale
+                    _resize_display_window(
+                        cv2,
+                        self.config.window_name,
+                        preview.shape,
+                        runtime_window_scale,
+                    )
 
             now = time.monotonic()
             if now >= next_report:
@@ -1121,7 +1163,7 @@ def _render_vlm_subtitle_panel(
         activity_color = (244, 183, 94)
     elif caption is not None:
         age_text = "刚刚" if caption_age is None else f"{float(caption_age):.1f} 秒前"
-        activity = f"字幕更新于 {age_text} · 按 Q 或 Esc 退出"
+        activity = f"字幕更新于 {age_text} · 拖拽窗口或按 +/- 缩放 · Q/Esc 退出"
         activity_color = (151, 158, 171)
     else:
         activity = "●  GPU 模型正在处理首帧，视频保持实时播放"
@@ -1275,6 +1317,20 @@ def _class_color(class_id: int) -> tuple[int, int, int]:
         int((37 * class_id + 80) % 205 + 50),
         int((17 * class_id + 130) % 205 + 50),
         int((29 * class_id + 30) % 205 + 50),
+    )
+
+
+def _resize_display_window(
+    cv2: Any,
+    window_name: str,
+    preview_shape: tuple[int, ...],
+    scale: float,
+) -> None:
+    height, width = preview_shape[:2]
+    cv2.resizeWindow(
+        window_name,
+        max(320, round(width * scale)),
+        max(240, round(height * scale)),
     )
 
 
