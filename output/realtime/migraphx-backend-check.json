@@ -1,0 +1,123 @@
+{
+  "iterations": 20,
+  "latest_detection_count": 5,
+  "latest_detections": [
+    {
+      "confidence": 0.9634,
+      "label": "person",
+      "xyxy": [
+        833.25,
+        3.0,
+        1656.0,
+        1070.25
+      ]
+    },
+    {
+      "confidence": 0.9414,
+      "label": "truck",
+      "xyxy": [
+        1.5,
+        101.62,
+        515.25,
+        598.5
+      ]
+    },
+    {
+      "confidence": 0.9282,
+      "label": "person",
+      "xyxy": [
+        1608.0,
+        2.25,
+        1918.5,
+        997.5
+      ]
+    },
+    {
+      "confidence": 0.6743,
+      "label": "person",
+      "xyxy": [
+        635.25,
+        349.5,
+        701.25,
+        433.5
+      ]
+    },
+    {
+      "confidence": 0.5522,
+      "label": "car",
+      "xyxy": [
+        589.5,
+        225.0,
+        1692.0,
+        663.75
+      ]
+    }
+  ],
+  "passed": true,
+  "runtime": {
+    "backend": "onnxruntime-migraphx",
+    "cache_dir": "/home/amd/work/vlm_camera_pipeline/models/ort-migraphx-cache/gfx1151-yolo26x",
+    "cache_files": [
+      "20f00-58de11c69ae52cf2-aafa5570125740ec-519c70b1cf0f20ca.mxr"
+    ],
+    "cpu_ep_fallback_disabled": true,
+    "device": "cuda:0",
+    "external_nms": false,
+    "gpu_arch": "gfx1151",
+    "gpu_name": "AMD Radeon Graphics",
+    "input_residency": "host-copy",
+    "input_shape": [
+      1,
+      3,
+      640,
+      640
+    ],
+    "io_binding": false,
+    "loaded": true,
+    "migraphx_fp16": true,
+    "model_end2end": true,
+    "model_path": "/home/amd/work/vlm_camera_pipeline/models/yolo26x.onnx",
+    "model_sha256": "88568299de91d4967f239a062c9f1619f695ebd05de73cd66b8f589591aaeb0a",
+    "onnxruntime": "1.23.2",
+    "output_residency": "host-copy",
+    "output_shape": [
+      1,
+      300,
+      6
+    ],
+    "provider": "MIGraphXExecutionProvider",
+    "provider_options": {
+      "device_id": "0",
+      "migraphx_arena_extend_strategy": "kNextPowerOfTwo",
+      "migraphx_bf16_enable": "0",
+      "migraphx_exhaustive_tune": "0",
+      "migraphx_external_alloc": "0",
+      "migraphx_external_empty_cache": "0",
+      "migraphx_external_free": "0",
+      "migraphx_fp16_enable": "1",
+      "migraphx_fp8_enable": "0",
+      "migraphx_int8_calibration_table_name": "",
+      "migraphx_int8_enable": "0",
+      "migraphx_int8_use_native_calibration_table": "0",
+      "migraphx_max_compiled_models": "1",
+      "migraphx_max_dynamic_batch": "0",
+      "migraphx_mem_limit": "18446744073709551615",
+      "migraphx_model_cache_dir": "\"/home/amd/work/vlm_camera_pipeline/models/ort-migraphx-cache/gfx1151-yolo26x\""
+    },
+    "providers": [
+      "MIGraphXExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "strict_first_run_ms": 16.712,
+    "strict_preflight_passed": true,
+    "strict_session_seconds": 1.435,
+    "ultralytics_branch": "add-onnx-migraphx-backend",
+    "ultralytics_commit": "34e213ca3ece4c18962f5bb922ec74da0c474d24"
+  },
+  "schema_version": 1,
+  "total_latency_ms": {
+    "mean": 15.393,
+    "p50": 16.13,
+    "p95": 17.0
+  }
+}

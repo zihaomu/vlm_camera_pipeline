@@ -1,3 +1,4 @@
 9fdd44a31c504547ffb81d2c6d9e6dac3493c8eaa8b0398d3f43bae6c7003e92  models/yolo26x.pt
+88568299de91d4967f239a062c9f1619f695ebd05de73cd66b8f589591aaeb0a  models/yolo26x.onnx
 cb8616bf6ed228982d9e47d7b72b42195342efa26044b0ee1873e61d9e78d3d7  models/Qwen3-VL-8B-Instruct-Q8_0.gguf
 d406d03ebabefdef86a2c86bf0c1b65f9e046f7a81c218f25de4931b46a07fc4  models/mmproj-F16.gguf

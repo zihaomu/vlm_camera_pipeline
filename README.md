@@ -2,14 +2,16 @@
 
 AMD Ryzen AI MAX+ 395 / Radeon 8060S（`gfx1151`）本地低延迟摄像头 Demo。
 
-当前已实现 M0-M2 的 PyTorch ROCm 主路径、M5 的 Qwen3-VL GPU 异步字幕，以及不加载
-YOLO 的纯 VLM 中文字幕 Demo：
+当前已实现 M0-M2 的 PyTorch ROCm 主路径、M3 的 ONNX Runtime MIGraphX host-copy 路径、
+M5 的 Qwen3-VL GPU 异步字幕，以及不加载 YOLO 的纯 VLM 中文字幕 Demo：
 
 ```text
 V4L2 camera -> depth-1 latest frame -> YOLO26x ROCm -> latest result -> OpenCV UI
                                   \-> depth-1 VLM snapshot -> Qwen3-VL ROCm -> caption
 V4L2/video  -> 25/30 FPS live display -> fixed subtitle panel
                     \-> every 3 s latest frame -> Qwen3-VL ROCm -> Chinese caption
+V4L2/video  -> depth-1 latest frame -> YOLO26x ONNX/MIGraphX FP16 -> boxes
+                    \-> independent Qwen3-VL worker -> subtitle panel
 ```
 
 本机 M2 长稳 Gate 已通过：持续 1800.130 秒，capture/inference/display 为
@@ -25,8 +27,17 @@ M5 的 30 秒真实窗口短测为 capture/inference/display 29.859/25.893/29.79
 成功、平均 `1.649 秒`，检测器状态为 `off/loaded=false`。字幕 Unicode 面板只在内容或状态
 变化时重绘，视频帧不等待 VLM 推理。
 
-Python 环境只由 `uv` 管理，`.venv`、依赖 cache 和应用配置均位于本仓库内。MIGraphX 和
-VA-API 录制属于后续独立里程碑。
+MIGraphX + VLM 的 20 秒并发短测在 25.014 FPS 视频源上处理了 476 个 YOLO frame
+（23.766 FPS），VLM 7/7 成功、均值 2.014 秒。YOLO 的 provider 为
+`MIGraphXExecutionProvider`、FP16 已启用，严格 graph preflight 禁止 CPU EP fallback；
+当前用户分支尚未打开 MIGraphX I/O Binding，因此如实记录为 host-copy，不宣称零拷贝。
+15 秒可见窗口复测为 capture/inference/display `24.992/23.397/24.992 FPS`，显示 P95
+`31.371 ms`，VLM `6/6` 成功。
+真实 NV12 1280×720@30 摄像头的 15 秒复测为 `29.923/25.858/29.657 FPS`，显示 P95
+`28.606 ms`、VLM `6/6` 成功且摄像头读取失败为 0。
+
+Python 环境只由 `uv` 管理，`.venv`、依赖 cache 和应用配置均位于本仓库内。VA-API 录制
+仍属于后续独立里程碑。
 
 ## 初始化
 
@@ -48,6 +59,17 @@ uv run --frozen --extra vlm python scripts/check_vlm_gpu.py
 
 第一条命令在仓库内构建锁定的 llama.cpp 并下载两份 GGUF；第二条发送一张真实图片并验证
 唯一 `gfx1151` code object、37/37 GPU 层、mmproj=`ROCm0`、`/dev/kfd` 与模型 SHA。
+
+启用 ONNX Runtime MIGraphX 路径：
+
+```bash
+bash scripts/setup_migraphx_gfx1151.sh
+```
+
+该脚本使用用户提供的
+`zihaomu/ultralytics:add-onnx-migraphx-backend`，下载 AMD ROCm 7.2.1 官方 cp312
+`onnxruntime-migraphx` wheel 与 `yolo26x.onnx`，全部放入仓库并由 uv lock 管理。首次生成
+gfx1151 `.mxr` cache 实测约需 109 秒，之后热启动约 2 秒。
 
 ## 运行实时 Demo
 
@@ -112,6 +134,28 @@ uv run --frozen python scripts/run_camera.py \
 VLM 服务只监听随机的 localhost 端口，由程序健康检查并在退出时清理。字幕 worker 只读取
 最新快照，深度固定为 1；单次 VLM 超时不会阻塞摄像头、YOLO 或 UI。
 
+运行独立的 ONNX Runtime MIGraphX YOLO + Qwen3-VL Demo：
+
+```bash
+uv run --frozen --extra migraphx --extra vlm \
+  python scripts/run_yolo_vlm_demo.py \
+  --device /dev/video0 --fourcc NV12 \
+  --width 1280 --height 720 --camera-fps 30 \
+  --vlm-interval 3 --window-scale 0.75
+```
+
+如果摄像头暂时不发布首帧，可用锁定视频验证完整窗口：
+
+```bash
+uv run --frozen --extra migraphx --extra vlm \
+  python scripts/run_yolo_vlm_demo.py \
+  --video-file third_party/notebook/ultralytics_yolo26/data/sidewalk.mp4
+```
+
+该入口与 `run_vlm_demo.py` 完全分开。视频区域显示 YOLO 框，下面显示中文 VLM 字幕；窗口
+同样支持拖拽、`+`/`-` 缩放、`0` 复位以及 `q`/Esc 退出。字幕内容只显示在窗口中，metrics
+JSON 默认写入脱敏占位符，不持久化真实摄像头描述。
+
 ## 验证
 
 ```bash
@@ -122,6 +166,8 @@ uv run --frozen python scripts/check_gfx1151_environment.py \
 uv run --frozen python scripts/evaluate_m5_metrics.py \
   --metrics output/realtime/metrics-yolo-vlm-display-30s.json \
   --gpu-kernel-error-count 0
+uv run --frozen --extra migraphx --extra vlm \
+  python scripts/check_migraphx_backend.py --iterations 20
 ```
 
 完整设计、实时状态和实测数据见 [doc/amd_395_pipeline.md](doc/amd_395_pipeline.md)。

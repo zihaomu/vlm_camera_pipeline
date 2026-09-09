@@ -1,8 +1,8 @@
 # Ultralytics YOLO26 在 AMD Ryzen AI MAX+ 395（含 PRO 395）上的本地摄像头实时部署方案
 
-> 文档状态：M0/M1/M2 已通过并归档；M5 Qwen3-VL GPU、YOLO+VLM 与纯 VLM 字幕窗口均已通过短测
+> 文档状态：M0/M1/M2 已通过并归档；M3 的 ORT-MIGraphX host-copy 路径已通过，GPU I/O Binding 尚未启用；M5 Qwen3-VL GPU、YOLO+VLM 与纯 VLM 字幕窗口均已通过短测
 >
-> 编写日期：2026-09-08
+> 编写日期：2026-09-08；最后实测更新：2026-09-09
 >
 > 本地工作区：`/home/amd/work/vlm_camera_pipeline`
 >
@@ -34,6 +34,10 @@
 | 2026-09-09 11:18 CST | M5 纯 VLM 中文字幕摄像头 Demo | **通过（15 秒短测）** | YOLO 未加载（detector=`off/loaded=false`）；NV12 720p30 capture/display 29.878/28.081 FPS，显示 422/449 帧，display p95 67.964 ms；VLM 6/6 成功、0 失败、均值 1.649 秒；固定视频下方 Unicode 字幕面板；`output/realtime/metrics-vlm-camera-display-15s.json` |
 | 2026-09-09 11:16 CST | M5 纯 VLM 循环视频 Demo | **通过（15 秒短测）** | 锁定 `sidewalk.mp4` 按原始 25 FPS 实时播放；capture/display 25.013/24.681 FPS，显示 371/376 帧；VLM 6/6 成功、均值 1.761 秒；`output/realtime/metrics-vlm-video-display-15s.json` |
 | 2026-09-09 11:26 CST | M5 字幕窗口缩放复测 | **通过（12 秒短测）** | 窗口改为可拖拽缩放，默认 `window_scale=0.75`；窗口管理器实测内容约 960×675，底部字幕完整位于 2880×1800 HiDPI 屏幕内；capture/display 25.033/24.950 FPS、显示 300/301 帧、VLM 5/5；`output/realtime/metrics-vlm-resizable-smoke.json` |
+| 2026-09-09 13:46 CST | M3 ORT-MIGraphX 严格 GPU Gate | **通过（host-copy）** | 本机原生 MIGraphX `2.15.0`；官方 ROCm 7.2.1 cp312 `onnxruntime-migraphx 1.23.2`；禁用 CPU EP fallback 后 `yolo26x.onnx` 在 gfx1151 编译成功，首次建图 109.177 秒、cache 热启动 2.123 秒、ORT 稳态 12.773 ms；最终 Ultralytics 完整路径 20 次检查均值 15.393 ms；`output/realtime/migraphx-backend-check.json` |
+| 2026-09-09 13:50 CST | M3+M5 MIGraphX YOLO + VLM 并发 Gate | **通过（20 秒无窗口短测）** | 锁定 25 FPS 视频上 capture/inference 25.014/23.766 FPS，YOLO 476 帧；VLM 7/7 成功、0 失败、请求均值 2.014 秒；YOLO provider=`MIGraphXExecutionProvider`/FP16，VLM 37/37 层与 mmproj=`ROCm0`；`output/realtime/metrics-yolo-migraphx-vlm-20s.json` |
+| 2026-09-09 13:55 CST | M3+M5 组合可见窗口 Gate | **通过（15 秒短测）** | capture/inference/display 24.992/23.397/24.992 FPS，capture-to-display p95 31.371 ms；VLM 6/6 成功、0 失败；可缩放窗口的视频区域显示 YOLO 框、下方显示中文字幕；`output/realtime/metrics-yolo-migraphx-vlm-display-15s.json` |
+| 2026-09-09 13:58 CST | M3+M5 真实摄像头组合 Gate | **通过（15 秒短测）** | NV12 1280×720@30，capture/inference/display 29.923/25.858/29.657 FPS，capture-to-display p95 28.606 ms，0 camera failure；VLM 6/6 成功、均值 1.893 秒；metrics 中真实画面字幕已脱敏；`output/realtime/metrics-yolo-migraphx-vlm-camera-15s.json` |
 
 进度表只记录已经在本机执行并取得证据的结果；设计目标不会提前标记为完成。运行日志默认不提交 Git，精简后的环境、版本与 SHA 身份写入 `native-lock/` 后提交。
 
@@ -63,7 +67,7 @@ VLM 字幕模式。纯 VLM 模式让摄像头或循环视频持续按 25/30 FPS 
 
 1. 云端 `models/ort-migraphx-cache/735f1583e99dfeb733da/*.mxr` **不能复制到 395 使用**。它绑定 `gfx1100`、ROCm、MIGraphX、ORT、PyTorch 和补丁 identity。
 2. 云端编译的 `hip_vaapi_bridge*.so` **不能复制到 395 使用**。必须以 `AMDGPU_TARGET=gfx1151` 在目标机重编译。
-3. 云端 `.build/wheels/onnxruntime_migraphx-1.24.2-cp310-*.whl` 只能在 ABI、Python 和 ROCm/MIGraphX 均匹配时使用；395 推荐 Python 3.12 时不能安装 `cp310` wheel。
+3. 云端 `.build/wheels/onnxruntime_migraphx-1.24.2-cp310-*.whl` 不能用于本机 Python 3.12。本机现使用 AMD ROCm 7.2.1 仓库提供的 `onnxruntime_migraphx-1.23.2-cp312` wheel，SHA-256 已写入 `native-lock/`。
 4. 不要设置 `HSA_OVERRIDE_GFX_VERSION` 把 `gfx1151` 伪装成 `gfx1100`。需要真正包含 `gfx1151` code object 的 PyTorch、OpenCV HIP、llama.cpp 和其他 native 工件。
 5. 本文把“395”解释为 AMD Ryzen AI MAX+ 395 / Ryzen AI MAX+ PRO 395 / Radeon 8060S。目标机 `rocminfo` 如果不是 `gfx1151`，立即停止，重新选择架构参数。
 
@@ -92,10 +96,10 @@ VLM 字幕模式。纯 VLM 模式让摄像头或循环视频持续按 25/30 FPS 
 | 必需 | ROCm 7.2.1 Ryzen PyTorch 安装 | `https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/install/installryz/native_linux/install-pytorch.html` | 本机 MVP 使用官方 PyTorch 2.9.1 / Python 3.12 wheel |
 | 必需 | YOLO26 项目源码 | `https://github.com/zihaomu/notebook.git` | checkout `d9d32c37a29272540937d3ee02b3f8f709046464` |
 | 必需 | YOLO26x PyTorch 权重 | `https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x.pt` | MVP 唯一必需模型，118,667,365 bytes |
-| 必需 | Ultralytics fork | `https://github.com/zihaomu/ultralytics.git` | checkout `34e213ca3ece4c18962f5bb922ec74da0c474d24` |
+| 必需 | Ultralytics fork | `https://github.com/zihaomu/ultralytics/tree/add-onnx-migraphx-backend` | branch `add-onnx-migraphx-backend`，当前锁定 commit `34e213ca3ece4c18962f5bb922ec74da0c474d24` |
 | 必需 | YOLO26 NMS 语义 | `https://docs.ultralytics.com/guides/end2end-detection/` | 根据模型 metadata 选择 confidence-only 或 NMS，禁止重复 NMS |
 | 可选 Route M | YOLO26x ONNX | `https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x.onnx` | ORT-MIGraphX 使用，223,287,479 bytes |
-| 可选 Route M | ONNX Runtime | `https://github.com/microsoft/onnxruntime` | 没有匹配 gfx1151 wheel 时源码构建 |
+| 可选 Route M | ONNX Runtime | `https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/` | 官方 `onnxruntime_migraphx-1.23.2-cp312` wheel；SHA `663bff4d...`，没有匹配 wheel 时才源码构建 |
 | 可选 Route M | MIGraphX | `https://github.com/ROCm/AMDMIGraphX` | 必须与目标 ROCm release 匹配 |
 | 可选优化 | OpenCV HIP fork | `https://github.com/zhangnju/opencv.git` | commit `e0387086b2103c23b3b25952b5fb700ca2e42132` |
 | 可选优化 | OpenCV contrib HIP fork | `https://github.com/zhangnju/opencv_contrib.git` | commit `467cbc6f99aa82ebda39a2e94d6125557bd84d0b` |
@@ -383,7 +387,7 @@ bash scripts/setup_native_gfx1151.sh
 脚本只写工作区内的 `.cache/`、`.venv/`、`third_party/`、`models/` 与 `native-lock/`；它会：
 
 1. 验证 `rocminfo` 包含 `gfx1151`；
-2. 下载并校验四个 AMD ROCm 7.2.1 wheel；
+2. 下载并校验四个 PyTorch ROCm wheel，以及 uv lock 所引用的可选 ORT-MIGraphX wheel；
 3. 检出两个锁定的上游 commit；
 4. 下载并校验 `yolo26x.pt`；
 5. 执行 `uv sync --frozen`、环境 Gate 和单元测试。
@@ -498,6 +502,7 @@ cd "$WORKSPACE"
 uv sync --frozen
 test "$(git -C third_party/notebook rev-parse HEAD)" = d9d32c37a29272540937d3ee02b3f8f709046464
 test "$(git -C third_party/ultralytics rev-parse HEAD)" = 34e213ca3ece4c18962f5bb922ec74da0c474d24
+test "$(git -C third_party/ultralytics branch --show-current)" = add-onnx-migraphx-backend
 
 uv run --frozen python - <<'PY'
 import cv2, torch, ultralytics
@@ -646,15 +651,19 @@ Gate。若 `x` 版检测正确却达不到实时目标，先保留真实基准�
 
 ### 7.2 Route M：ORT MIGraphX 实验性优化后端
 
-只有目标机验证通过后，才切换到项目现有 `UltralyticsYOLODetector`：
+Route M 已在目标机用独立的 `MIGraphXCameraDetector` 验证，不改变默认 PyTorch 入口，也不
+改变纯 VLM 入口。当前锁定组合为：
 
 ```text
-Ultralytics 8.4.75 fork commit 34e213ca...
-I/O Binding patch SHA 6c43dc90...
+Ultralytics 8.4.75 fork branch add-onnx-migraphx-backend
+Ultralytics commit 34e213ca...
+onnxruntime-migraphx 1.23.2 cp312 / ROCm 7.2.1 official wheel
+native MIGraphX 2.15.0 / ROCm 7.2.1
 yolo26x.onnx SHA 88568299...
 MIGraphXExecutionProvider first
 migraphx_fp16_enable=1
-GPU input/output binding
+session.disable_cpu_ep_fallback=1 strict graph preflight
+host input/output copy; GPU I/O Binding=false
 ```
 
 锁定的 `yolo26x.onnx` 预期输出 `(1, 300, 6)`。对 YOLO26 来说，该 shape 可能来自
@@ -664,73 +673,70 @@ NMS-free one-to-one head，也可能来自图内嵌 NMS；shape 本身不能决�
 表明模型是 raw one-to-many 输出，则使用单独的 raw-output parser/NMS 实现，不能复用当前
 `(1,300,6)` parser。
 
+本机 ONNX metadata 已确认 `task=detect`、`end2end=True`、导出参数 `nms=False`，固定输入
+`[1,3,640,640]`、固定输出 `[1,300,6]`。因此应用只执行 confidence filter、坐标还原和
+退化框过滤，不执行第二次外部 NMS。
+
 安装顺序：
 
-1. 安装与 ROCm release 匹配的系统 MIGraphX；
-2. 获取与 Python 3.12、ROCm/MIGraphX 匹配的 `onnxruntime-migraphx` wheel；若没有匹配 wheel，则从 ONNX Runtime 源码构建，不能安装云端 `cp310` wheel；
-3. 检出 Ultralytics fork commit `34e213ca3ece4c18962f5bb922ec74da0c474d24`；
-4. 应用上游参考目录中的 `docker/patches/ultralytics-migraphx-iobinding.patch`；
-5. fork 已作为 uv editable path source 锁定；应用 patch 后用单独的 M3 lock 更新环境，禁止 pip 绕过 lock；
-6. 运行 provider 和指针复用测试。
+1. 验证与 ROCm 7.2.1 匹配的系统 `migraphx`、`migraphx-dev`、`half`；本机均已安装；
+2. 下载 AMD ROCm 7.2.1 官方 cp312 ORT-MIGraphX wheel 到仓库 `.cache/wheels/`；
+3. 检出用户提供的 Ultralytics `add-onnx-migraphx-backend` 分支和锁定 commit；
+4. 由 `pyproject.toml` 的 `migraphx` extra 和本地 wheel path 更新 `uv.lock`，禁止 pip 绕过 lock；
+5. 下载并校验 `models/yolo26x.onnx`；
+6. 运行严格 provider、模型 contract、cache 和真实帧检测测试。
 
-示意：
-
-```bash
-export WORKSPACE=/home/amd/work/vlm_camera_pipeline
-export UPSTREAM_YOLO26="$WORKSPACE/third_party/notebook/ultralytics_yolo26"
-cd "$WORKSPACE"
-git -C "$WORKSPACE/third_party/ultralytics" checkout 34e213ca3ece4c18962f5bb922ec74da0c474d24
-git -C "$WORKSPACE/third_party/ultralytics" apply \
-  "$UPSTREAM_YOLO26/docker/patches/ultralytics-migraphx-iobinding.patch"
-uv sync --frozen
-```
-
-安装 ORT 后的硬门：
+完整安装/校验入口：
 
 ```bash
-uv run --frozen python - <<'PY'
-import onnxruntime as ort
-print(ort.__version__)
-print(ort.get_available_providers())
-assert "MIGraphXExecutionProvider" in ort.get_available_providers()
-session = ort.InferenceSession(
-    "models/yolo26x.onnx", providers=["MIGraphXExecutionProvider"]
-)
-print("model_metadata", session.get_modelmeta().custom_metadata_map)
-PY
-
-uv run --frozen python tests/test_ultralytics_migraphx_backend.py \
-  --model models/yolo26x.onnx --iterations 100
+cd /home/amd/work/vlm_camera_pipeline
+bash scripts/setup_migraphx_gfx1151.sh
 ```
 
-必须看到：
+该脚本只写仓库的 `.cache/`、`.venv/`、`models/`、`output/` 和被 `.gitignore` 隔离的
+`third_party/`；不会调用 sudo、apt 或系统 Python。手动重复后端检查：
+
+```bash
+uv run --frozen --extra migraphx --extra vlm \
+  python scripts/check_migraphx_backend.py \
+  --model models/yolo26x.onnx \
+  --cache-dir models/ort-migraphx-cache/gfx1151-yolo26x \
+  --iterations 20
+```
+
+必须在输出 JSON 中看到：
 
 ```text
 provider=MIGraphXExecutionProvider
-io_binding=true
 migraphx_fp16=true
-input_device=cuda:0
-output_device=cuda:0
+strict_preflight_passed=true
+cpu_ep_fallback_disabled=true
+gpu_arch=gfx1151
 output_shape=[1,300,6]
 external_nms=false
-iterations=100
 ```
 
-如果 `MIGraphXExecutionProvider` 缺失或首次推理出现 `invalid device function`，说明 wheel/native library 不含 `gfx1151`，不要回退 CPU 后声称完成 Route M；应继续使用已经通过的 PyTorch GPU 路径。
+本机实测首次从 ONNX 编译 gfx1151 cache 用时 109.177 秒，第一次零输入推理 608 ms；同一
+cache 热启动建会话 2.123 秒，随后 ORT 稳态均值 12.773 ms。最终通过 Ultralytics 完整执行
+预处理、MIGraphX 推理与 end-to-end 后处理的最终 20 次稳态均值为 15.393 ms。
+
+用户提供的 `add-onnx-migraphx-backend` 分支当前没有为 MIGraphX 打开 I/O Binding，所以
+本阶段如实记录 `io_binding=false`、`input/output_residency=host-copy`。模型计算已由
+MIGraphX/FP16 加速，但不能称为零拷贝；GPU I/O Binding/指针复用仍是后续 M3 性能项，
+不阻塞当前组合 Demo。
+
+如果 `MIGraphXExecutionProvider` 缺失、严格 session 建立失败或首次推理出现
+`invalid device function`，不要回退 CPU 后声称完成 Route M；应继续使用已经通过的
+PyTorch GPU 路径。
 
 ### 7.3 生成 gfx1151 cache
 
-隔离旧 cache 并生成 395 专用 cache；保留失败工件用于排查，不直接删除：
+生成并复用 395 专用 cache：
 
 ```bash
-mkdir -p output/realtime/failed-cache
-if test -e models/ort-migraphx-cache/gfx1151-bringup; then
-  mv models/ort-migraphx-cache/gfx1151-bringup \
-    "output/realtime/failed-cache/gfx1151-bringup-$(date +%Y%m%d-%H%M%S)"
-fi
-export ULTRALYTICS_MIGRAPHX_CACHE_ROOT="$PWD/models/ort-migraphx-cache"
-uv run --frozen python tests/test_ultralytics_migraphx_backend.py \
-  --model models/yolo26x.onnx --iterations 10
+uv run --frozen --extra migraphx --extra vlm \
+  python scripts/check_migraphx_backend.py \
+  --cache-dir models/ort-migraphx-cache/gfx1151-yolo26x
 ```
 
 运行后检查 `identity.json`：
@@ -739,7 +745,9 @@ uv run --frozen python tests/test_ultralytics_migraphx_backend.py \
 find models/ort-migraphx-cache -name identity.json -print -exec cat {} \;
 ```
 
-Gate：`gpu_arch` 必须是 `gfx1151`；缓存目录不能是云端 `735f1583e99dfeb733da`；连续重启应命中同一 identity。
+Gate：`gpu_arch` 必须是 `gfx1151`；缓存目录不能是云端 `735f1583e99dfeb733da`；连续重启
+应命中同一 identity。identity 任一字段不匹配时程序直接拒绝复用，并要求指定新的
+`--migraphx-cache-dir`，不会覆盖可能属于其他目标的 `.mxr`。
 
 ## 8. OpenCV HIP 与 native bridge
 
@@ -886,14 +894,19 @@ src/camera_io.py
 src/realtime_pipeline.py
 src/vlm.py
 scripts/run_camera.py
+scripts/run_vlm_demo.py
+scripts/run_yolo_vlm_demo.py
 scripts/check_gfx1151_environment.py
 scripts/check_camera_baseline.py
 scripts/check_pytorch_replay.py
 scripts/check_vlm_gpu.py
+scripts/check_migraphx_backend.py
 scripts/evaluate_m2_metrics.py
 scripts/evaluate_m5_metrics.py
 scripts/setup_native_gfx1151.sh
 scripts/setup_vlm_gfx1151.sh
+scripts/setup_migraphx_gfx1151.sh
+src/migraphx_detector.py
 tests/test_latest_frame_queue.py
 tests/test_camera_replay.py
 tests/test_realtime_metrics.py
@@ -901,15 +914,18 @@ tests/test_m2_gate.py
 tests/test_m5_gate.py
 tests/test_document_contract.py
 tests/test_vlm_worker.py
+tests/test_vlm_demo.py
+tests/test_migraphx_demo.py
 ```
 
 `third_party/notebook` 中的云端 `src/pipeline.py` 和 `RocDecodeReader` 保持不变；当前
 工作区通过适配层或带来源记录的复制文件做 replay 回归，不在上游 checkout 内开发。
 
-上述 M0-M2 与 M5 文件已于 2026-09-08 落地。`ruff` 检查通过，pytest 当前为 18/18
-通过；真实 `CameraReader`、30 分钟 YOLO 窗口和 30 秒 YOLO + VLM 窗口均已通过。
-`--vlm llamacpp` 现会启动受管的 localhost 服务并执行低频异步字幕；M3/M4 尚未实现，CLI
-仍会对 `--backend migraphx` 和非 `off` 的 `--record` 立即报出明确错误。
+上述 M0-M3 与 M5 文件已落地。`ruff` 检查通过，pytest 当前为 30/30 通过；真实
+`CameraReader`、30 分钟 PyTorch YOLO 窗口、纯 VLM 字幕窗口，以及 20 秒 MIGraphX YOLO +
+VLM 并发均已通过对应短测。`scripts/run_camera.py` 仍保持 PyTorch 默认入口，并继续拒绝
+`--backend migraphx`；新的 Route M 只由 `scripts/run_yolo_vlm_demo.py` 启动，避免影响已验证
+主线。M4 录制尚未实现，非 `off` 的 `--record` 仍会立即报出明确错误。
 
 ### 9.2 CameraReader
 
@@ -1099,17 +1115,21 @@ uv run --frozen python scripts/run_camera.py \
   --vlm off
 ```
 
-只有 Route M 全部门通过后才使用：
+Route M 和 VLM 的组合使用独立入口，不复用上面的纯 PyTorch CLI：
 
 ```bash
-uv run --frozen python scripts/run_camera.py \
-  --device /dev/video0 \
+uv run --frozen --extra migraphx --extra vlm \
+  python scripts/run_yolo_vlm_demo.py \
+  --device /dev/video0 --fourcc NV12 \
   --width 1280 --height 720 --camera-fps 30 \
-  --model models/yolo26x.onnx \
-  --backend migraphx \
-  --confidence 0.50 --iou 0.45 \
-  --display --record off --vlm off
+  --yolo-model models/yolo26x.onnx \
+  --migraphx-cache-dir models/ort-migraphx-cache/gfx1151-yolo26x \
+  --confidence 0.50 --vlm-interval 3 --window-scale 0.75
 ```
+
+该程序没有 `--backend` 开关：YOLO 固定要求 ORT
+`MIGraphXExecutionProvider`/FP16，VLM 固定要求 llama.cpp `ROCm0` 全层与 mmproj offload；任一
+GPU Gate 失败即退出。纯 VLM 仍单独使用 `scripts/run_vlm_demo.py`。
 
 必须提供：
 
@@ -1338,9 +1358,11 @@ uv run --frozen python scripts/evaluate_m2_metrics.py \
 
 ### M3：OpenCV HIP + 可选 ORT MIGraphX 优化
 
-- OpenCV HIP external pointer/resize gate 通过；外部 NMS 仅在 raw one-to-many profile 验证；
-- PyTorch GPU 实时路径继续可用；
-- 若启用 Route M：MIGraphX provider first、GPU I/O Binding/指针复用，并生成 `gfx1151` cache；
+- [x] 官方 cp312 ORT-MIGraphX wheel、provider first、FP16、禁 CPU fallback 的 graph preflight；
+- [x] `yolo26x.onnx` metadata/NMS 语义、真实帧检测和 `gfx1151` cache identity；
+- [x] host-copy 版与 VLM 并发 20 秒短测；PyTorch GPU 实时路径继续可用；
+- [ ] GPU I/O Binding/指针复用和 OpenCV HIP external pointer/resize gate；
+- 外部 NMS 仅在 raw one-to-many profile 验证，当前 end-to-end 模型不执行外部 NMS；
 - Route M 失败不允许静默切 CPU，也不影响已经通过的 M2 PyTorch MVP。
 
 ### M4：VA-API 录制
@@ -1358,6 +1380,7 @@ uv run --frozen python scripts/evaluate_m2_metrics.py \
 - [x] VLM timeout/failure isolation 与有限时清理；
 - [x] 30 秒真实窗口 on/off 初步性能对照；
 - [x] 不初始化 YOLO 的纯 VLM 中文字幕窗口与循环视频入口；
+- [x] 独立 MIGraphX YOLO + VLM 启动器与 20 秒无窗口并发短测；
 - [ ] VLM on 的 30 分钟长稳 Gate（当前不阻塞短时实时 Demo）。
 
 纯 VLM 摄像头 Demo：
@@ -1386,6 +1409,36 @@ uv run --frozen python scripts/run_vlm_demo.py \
 窗口使用 OpenCV `WINDOW_NORMAL | WINDOW_KEEPRATIO`，因此可拖拽边框并保持“视频+字幕”整体
 比例。默认 `--window-scale 0.75`；窗口聚焦时 `+`/`-` 每次调整 0.1，`0` 恢复启动比例。
 缩放只影响展示尺寸，不会改变送入 VLM 的 1280×720 最新帧。
+
+MIGraphX YOLO + VLM 摄像头 Demo 与纯 VLM 入口完全分开：
+
+```bash
+cd /home/amd/work/vlm_camera_pipeline
+uv run --frozen --extra migraphx --extra vlm \
+  python scripts/run_yolo_vlm_demo.py \
+  --device /dev/video0 --fourcc NV12 \
+  --width 1280 --height 720 --camera-fps 30 \
+  --vlm-interval 3 --window-scale 0.75
+```
+
+摄像头暂不可用时，用同一入口循环回放锁定视频：
+
+```bash
+uv run --frozen --extra migraphx --extra vlm \
+  python scripts/run_yolo_vlm_demo.py \
+  --video-file third_party/notebook/ultralytics_yolo26/data/sidewalk.mp4 \
+  --vlm-interval 3 --window-scale 0.75
+```
+
+组合入口中，采集线程只发布 depth-1 最新帧；YOLO worker 持续处理最新帧并发布最新检测框；
+VLM worker 每 3 秒最多取一张最新快照。主线程始终继续显示视频，并将未过期的检测框绘制在
+视频区域、将最新中文 VLM 描述绘制在下方字幕区域。因此一次约 2 秒的 VLM 请求不会卡住
+画面或积压帧。20 秒 headless 实测中，25.014 FPS 视频源对应 23.766 YOLO FPS，VLM 7/7
+成功。随后 15 秒可见视频窗口实测维持 24.992 display FPS、YOLO 23.397 FPS，
+capture-to-display p95 31.371 ms，VLM 6/6 成功。真实 NV12 720p30 摄像头窗口复测达到
+29.923/25.858/29.657 capture/inference/display FPS，显示 p95 28.606 ms，VLM 6/6 成功。
+字幕仍在窗口中正常显示，但 metrics JSON 默认只持久化脱敏占位符，不保存摄像头画面的
+自然语言内容。
 
 已知摄像头边界（2026-09-09）：本机 `amd_isp_capture` 在多次打开/关闭后偶发进入设备节点
 仍存在、格式查询正常但不再发布首帧的状态。确认无进程持有 `/dev/video0` 后，仅重载
@@ -1420,19 +1473,23 @@ vlm_camera_pipeline/
 ├── src/
 │   ├── __init__.py
 │   ├── camera_io.py
+│   ├── migraphx_detector.py
 │   ├── realtime_pipeline.py
 │   └── vlm.py
 ├── scripts/
 │   ├── check_camera_baseline.py
 │   ├── check_gfx1151_environment.py
+│   ├── check_migraphx_backend.py
 │   ├── check_pytorch_replay.py
 │   ├── check_vlm_gpu.py
 │   ├── evaluate_m2_metrics.py
 │   ├── evaluate_m5_metrics.py
 │   ├── setup_native_gfx1151.sh
+│   ├── setup_migraphx_gfx1151.sh
 │   ├── setup_vlm_gfx1151.sh
 │   ├── run_camera.py
-│   └── run_vlm_demo.py
+│   ├── run_vlm_demo.py
+│   └── run_yolo_vlm_demo.py
 ├── tests/
 │   ├── test_latest_frame_queue.py
 │   ├── test_camera_replay.py
@@ -1441,7 +1498,8 @@ vlm_camera_pipeline/
 │   ├── test_m5_gate.py
 │   ├── test_document_contract.py
 │   ├── test_vlm_worker.py
-│   └── test_vlm_demo.py
+│   ├── test_vlm_demo.py
+│   └── test_migraphx_demo.py
 ├── third_party/
 │   ├── notebook/                 # 锁定 commit 的只读上游参考
 │   ├── ultralytics/              # 锁定 fork
@@ -1552,19 +1610,21 @@ VA-API 或 Qwen 失败而把整个部署判为不可用。
 [x] uv 环境中的 Python/PyTorch gfx1151 smoke（2026-09-08）
 [x] yolo26x.pt SHA-256 一致（2026-09-08）
 [x] YOLO26x Route P 真实摄像头 GPU 短基线正确，15 秒窗口 29.61 inference FPS（2026-09-08）
-[x] latest-frame/VLM worker synthetic + 锁定 sidewalk.mp4 replay/metrics/文档合同 tests：24/24 通过（2026-09-09）
+[x] latest-frame/VLM/MIGraphX synthetic + 锁定 sidewalk.mp4 replay/metrics/文档合同 tests：30/30 通过（2026-09-09）
 [x] camera realtime 30 分钟 Gate：29.820 inference FPS / 14.951 ms display p95 / 0 read failure（2026-09-08）
 [x] M0/M1 environment、metrics、日志与 PyTorch 回放截图归档（2026-09-08）
 [x] VLM：两份 GGUF SHA-256、native llama.cpp、全层/mmproj ROCm0 Gate（2026-09-08）
 [x] YOLO + VLM：30 秒实时窗口、VLM 6/6 成功、0 camera/GPU fault（2026-09-08）
 [x] 纯 VLM：中文字幕面板、摄像头 28.081 display FPS、循环视频 24.681/25 FPS（2026-09-09）
+[x] Route M：yolo26x.onnx SHA、metadata/end2end 语义、MIGraphX provider first/FP16、严格 CPU fallback preflight、gfx1151 cache identity（2026-09-09）
+[x] Route M + VLM：20 秒并发 23.766 YOLO FPS、VLM 7/7；15 秒真实摄像头 25.858 YOLO / 29.657 display FPS、VLM 6/6（2026-09-09）
 ```
 
 按需启用：
 
 ```text
-[ ] Route M：yolo26x.onnx SHA-256 一致
-[ ] Route M：model metadata/NMS 语义、MIGraphX provider first、GPU I/O Binding、gfx1151 cache identity
+[ ] Route M：GPU I/O Binding/指针复用；当前 host-copy 路径已通过，`io_binding=false`
+[ ] Route M + VLM：30 分钟长稳 Gate（15 秒可见窗口 Gate 已通过）
 [ ] OpenCV HIP external-pointer/resize Gate；raw one-to-many profile 才增加 GPU NMS Gate
 [ ] VA-API：gfx1151 bridge、12 帧 smoke、长时间计数一致
 [ ] VLM on：30 分钟长稳与同等时长 on/off 性能对照

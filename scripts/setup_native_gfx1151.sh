@@ -76,6 +76,10 @@ download_verified \
   'https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/torchaudio-2.9.0%2Brocm7.2.1.gite3c6ee2b-cp312-cp312-linux_x86_64.whl' \
   "$wheel_dir/torchaudio-2.9.0+rocm7.2.1.gite3c6ee2b-cp312-cp312-linux_x86_64.whl" \
   '023d1ce5d847b2a0fbebacf52d35b4c7a233ca07b3dbd0f1cbde84362cbcf33d'
+download_verified \
+  'https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/onnxruntime_migraphx-1.23.2-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl' \
+  "$wheel_dir/onnxruntime_migraphx-1.23.2-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" \
+  '663bff4dc3f72582d69f12ad073eb5695dfb526d574376cc8e5b161c7d2f0f08'
 
 checkout_locked_repo \
   'https://github.com/zihaomu/notebook.git' \

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "captured_at": "2026-09-08T16:43:26+08:00",
+  "captured_at": "2026-09-09T13:50:55+08:00",
   "hardware": {
     "gpu_arch": "gfx1151",
     "gpu_name": "AMD Radeon Graphics",
@@ -8,8 +8,11 @@
   },
   "runtime": {
     "opencv": "4.11.0",
+    "onnx": "1.22.0",
+    "onnxruntime_migraphx": "1.23.2",
     "python": "3.12.3",
     "rocm": "7.2.1",
+    "migraphx": "2.15.0.70201-81~24.04",
     "torch": "2.9.1+rocm7.2.1.gitff65f5bc",
     "torchaudio": "2.9.0+rocm7.2.1.gite3c6ee2b",
     "torchvision": "0.24.0+rocm7.2.1.gitb919bd0c",
@@ -24,6 +27,7 @@
   },
   "sources": {
     "notebook_commit": "d9d32c37a29272540937d3ee02b3f8f709046464",
+    "ultralytics_branch": "add-onnx-migraphx-backend",
     "ultralytics_commit": "34e213ca3ece4c18962f5bb922ec74da0c474d24"
   }
 }

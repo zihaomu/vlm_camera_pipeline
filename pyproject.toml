@@ -18,6 +18,10 @@ dependencies = [
 [project.optional-dependencies]
 reference = ["av>=14,<17", "openai>=1,<3"]
 vlm = ["huggingface-hub>=0.34,<2", "openai>=1,<3"]
+migraphx = [
+  "onnx>=1.19,<2",
+  "onnxruntime-migraphx==1.23.2",
+]
 
 [dependency-groups]
 dev = [
@@ -35,6 +39,7 @@ torchaudio = { path = ".cache/wheels/rocm7.2.1/torchaudio-2.9.0+rocm7.2.1.gite3c
 torchvision = { path = ".cache/wheels/rocm7.2.1/torchvision-0.24.0+rocm7.2.1.gitb919bd0c-cp312-cp312-linux_x86_64.whl" }
 triton = { path = ".cache/wheels/rocm7.2.1/triton-3.5.1+rocm7.2.1.gita272dfa8-cp312-cp312-linux_x86_64.whl" }
 ultralytics = { path = "third_party/ultralytics", editable = true }
+onnxruntime-migraphx = { path = ".cache/wheels/rocm7.2.1/onnxruntime_migraphx-1.23.2-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

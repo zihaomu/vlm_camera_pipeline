@@ -372,7 +372,11 @@ class MetricsCollector:
                 - self.vlm_cancelled,
             ),
             "latest_sequence": self.vlm_latest_sequence,
-            "latest_caption": self.vlm_latest_caption,
+            "latest_caption": (
+                None
+                if self.vlm_latest_caption is None
+                else "<redacted: caption text is not persisted>"
+            ),
             "latest_caption_age_seconds": _round_optional(caption_age_seconds),
             "last_error": self.vlm_last_error,
             "request_latency_ms": _summary(self._vlm_request_ms),
@@ -943,7 +947,10 @@ class RealtimePipeline:
                 if self.config.display_layout == "subtitle":
                     assert subtitle_renderer is not None
                     preview = subtitle_renderer.render(
-                        display_frame.bgr, live_metrics, caption=caption
+                        display_frame.bgr,
+                        live_metrics,
+                        caption=caption,
+                        detections=(usable_result.detections if usable_result else ()),
                     )
                 else:
                     preview = draw_on_host_frame(
@@ -1033,25 +1040,8 @@ def draw_on_host_frame(
     import cv2
 
     preview = frame_bgr.copy()
-    height, width = preview.shape[:2]
-    for detection in detections:
-        x1 = max(0, min(width - 1, round(detection.x1)))
-        y1 = max(0, min(height - 1, round(detection.y1)))
-        x2 = max(0, min(width - 1, round(detection.x2)))
-        y2 = max(0, min(height - 1, round(detection.y2)))
-        color = _class_color(detection.class_id)
-        cv2.rectangle(preview, (x1, y1), (x2, y2), color, 2)
-        label = f"{detection.label} {detection.confidence:.2f}"
-        cv2.putText(
-            preview,
-            label,
-            (x1, max(18, y1 - 7)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            color,
-            2,
-            cv2.LINE_AA,
-        )
+    _height, width = preview.shape[:2]
+    _draw_detection_boxes(preview, detections)
 
     age_text = "n/a" if detection_age_ms is None else f"{detection_age_ms:.1f} ms"
     sequence_text = "n/a" if detection_sequence is None else str(detection_sequence)
@@ -1101,6 +1091,32 @@ def draw_on_host_frame(
     return preview
 
 
+def _draw_detection_boxes(preview: np.ndarray, detections: Sequence[Detection]) -> None:
+    """Draw detections in place on a display-owned BGR array."""
+
+    import cv2
+
+    height, width = preview.shape[:2]
+    for detection in detections:
+        x1 = max(0, min(width - 1, round(detection.x1)))
+        y1 = max(0, min(height - 1, round(detection.y1)))
+        x2 = max(0, min(width - 1, round(detection.x2)))
+        y2 = max(0, min(height - 1, round(detection.y2)))
+        color = _class_color(detection.class_id)
+        cv2.rectangle(preview, (x1, y1), (x2, y2), color, 2)
+        label = f"{detection.label} {detection.confidence:.2f}"
+        cv2.putText(
+            preview,
+            label,
+            (x1, max(18, y1 - 7)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
+
+
 def _render_vlm_subtitle_panel(
     width: int,
     panel_height: int,
@@ -1125,8 +1141,19 @@ def _render_vlm_subtitle_panel(
     display_fps = float(live_metrics.get("display_fps", 0.0))
     caption_age = live_metrics.get("vlm_caption_age_seconds")
 
-    draw.text((24, 14), "QWEN3-VL  实时画面字幕", font=header_font, fill=(169, 225, 229))
-    status = f"GPU · ROCm0     视频 {display_fps:.1f} FPS     VLM {successes}/{requests}"
+    detector_enabled = live_metrics.get("backend", "off") != "off"
+    if detector_enabled:
+        header = "YOLO26 + QWEN3-VL  实时视觉"
+        inference_fps = float(live_metrics.get("inference_fps", 0.0))
+        detections = int(live_metrics.get("detection_count", 0))
+        status = (
+            f"MIGraphX FP16 · YOLO {inference_fps:.1f} FPS / {detections} 目标 · "
+            f"视频 {display_fps:.1f} FPS · VLM {successes}/{requests}"
+        )
+    else:
+        header = "QWEN3-VL  实时画面字幕"
+        status = f"GPU · ROCm0     视频 {display_fps:.1f} FPS     VLM {successes}/{requests}"
+    draw.text((24, 14), header, font=header_font, fill=(169, 225, 229))
     status_width = _text_width(draw, status, status_font)
     draw.text(
         (max(24, width - status_width - 24), 17),
@@ -1205,6 +1232,7 @@ class VlmSubtitleRenderer:
         live_metrics: dict[str, Any],
         *,
         caption: VlmCaption | None,
+        detections: Sequence[Detection] = (),
     ) -> np.ndarray:
         if frame_bgr.dtype != np.uint8 or frame_bgr.ndim != 3 or frame_bgr.shape[2] != 3:
             raise ValueError("frame_bgr must be an HxWx3 uint8 array")
@@ -1237,6 +1265,8 @@ class VlmSubtitleRenderer:
 
         preview = np.empty((height + self.panel_height, width, 3), dtype=np.uint8)
         preview[:height] = frame_bgr
+        if detections:
+            _draw_detection_boxes(preview[:height], detections)
         preview[height:] = self._panel_bgr
         return preview
 
@@ -1246,6 +1276,7 @@ def draw_vlm_subtitle_frame(
     live_metrics: dict[str, Any],
     *,
     caption: VlmCaption | None,
+    detections: Sequence[Detection] = (),
     panel_height: int = 180,
     font_path: str = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
 ) -> np.ndarray:
@@ -1254,7 +1285,7 @@ def draw_vlm_subtitle_frame(
     return VlmSubtitleRenderer(
         panel_height=panel_height,
         font_path=font_path,
-    ).render(frame_bgr, live_metrics, caption=caption)
+    ).render(frame_bgr, live_metrics, caption=caption, detections=detections)
 
 
 @lru_cache(maxsize=16)

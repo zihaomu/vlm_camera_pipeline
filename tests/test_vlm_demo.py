@@ -166,6 +166,7 @@ def test_realtime_pipeline_can_run_vlm_without_loading_a_detector(tmp_path) -> N
     assert metrics["processed_frames"] == 0
     assert metrics["dropped_frames"] == 0
     assert metrics["vlm"]["successes"] >= 1
+    assert metrics["vlm"]["latest_caption"] == "<redacted: caption text is not persisted>"
     assert metrics_path.is_file()
 
 
