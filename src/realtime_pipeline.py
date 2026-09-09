@@ -12,12 +12,13 @@ import time
 from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
 
-from .camera_io import CameraReader, CapturedFrame, LatestFrameSlot
+from .camera_io import CameraReader, CapturedFrame, LatestFrameSlot, VideoFileReader
 from .vlm import LatestCaptionSlot, VlmCaption, VlmEngine, VlmWorker
 
 
@@ -313,7 +314,11 @@ class MetricsCollector:
             self.finished_ns = finished_ns
             self.camera_read_failures = camera_read_failures
             elapsed_seconds = max(1e-9, (finished_ns - self.started_ns) / 1e9)
-            dropped_frames = max(0, camera_frames - self.processed_frames)
+            dropped_frames = (
+                max(0, camera_frames - self.processed_frames)
+                if self.backend != "off"
+                else 0
+            )
             return {
                 "schema_version": 1,
                 "backend": self.backend,
@@ -658,17 +663,22 @@ class InferenceWorker:
 class PipelineConfig:
     display: bool = True
     display_mode: str = "live"
+    display_layout: str = "overlay"
     max_latency_ms: float = 150.0
     metrics_json: str = "output/realtime/metrics.json"
     duration_seconds: float | None = None
     warmup_iterations: int = 2
     vlm_interval_seconds: float = 6.0
     vlm_caption_expiry_seconds: float = 15.0
+    subtitle_panel_height: int = 180
+    subtitle_font_path: str = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
     window_name: str = "YOLO26 on Ryzen AI MAX+ 395"
 
     def __post_init__(self) -> None:
         if self.display_mode not in {"live", "processed"}:
             raise ValueError("display_mode must be 'live' or 'processed'")
+        if self.display_layout not in {"overlay", "subtitle"}:
+            raise ValueError("display_layout must be 'overlay' or 'subtitle'")
         if self.max_latency_ms <= 0:
             raise ValueError("max_latency_ms must be positive")
         if self.duration_seconds is not None and self.duration_seconds <= 0:
@@ -679,15 +689,17 @@ class PipelineConfig:
             raise ValueError("vlm_interval_seconds must be positive")
         if self.vlm_caption_expiry_seconds <= 0:
             raise ValueError("vlm_caption_expiry_seconds must be positive")
+        if self.subtitle_panel_height < 120:
+            raise ValueError("subtitle_panel_height must be at least 120 pixels")
 
 
 class RealtimePipeline:
-    """Orchestrate camera, inference, and main-thread OpenCV display."""
+    """Orchestrate camera, optional detection/VLM inference, and OpenCV display."""
 
     def __init__(
         self,
-        camera: CameraReader,
-        detector: Detector,
+        camera: CameraReader | VideoFileReader,
+        detector: Detector | None,
         config: PipelineConfig,
         *,
         vlm_engine: VlmEngine | None = None,
@@ -699,7 +711,7 @@ class RealtimePipeline:
         self.result_slot = LatestResultSlot()
         self.caption_slot = LatestCaptionSlot()
         self.metrics = MetricsCollector(
-            detector.backend_name,
+            detector.backend_name if detector is not None else "off",
             vlm_mode=vlm_engine.mode if vlm_engine is not None else "off",
         )
         self._stop_event = threading.Event()
@@ -726,25 +738,29 @@ class RealtimePipeline:
                 self.camera.raise_if_failed()
                 raise RuntimeError("camera did not publish its first frame within 5 seconds")
 
-            self.detector.warmup(first_frame.bgr, self.config.warmup_iterations)
+            if self.detector is None and self.config.display_mode == "processed":
+                raise ValueError("processed display mode requires a detector")
+            if self.detector is not None:
+                self.detector.warmup(first_frame.bgr, self.config.warmup_iterations)
             latest_after_warmup = self.camera.slot.latest()
             assert latest_after_warmup is not None
             camera_baseline = self.camera.published_frames
             self.metrics = MetricsCollector(
-                self.detector.backend_name,
+                self.detector.backend_name if self.detector is not None else "off",
                 vlm_mode=(
                     self.vlm_engine.mode if self.vlm_engine is not None else "off"
                 ),
             )
-            worker = InferenceWorker(
-                self.camera.slot,
-                self.result_slot,
-                self.detector,
-                self.metrics,
-                retain_source_frame=self.config.display_mode == "processed",
-                initial_sequence=latest_after_warmup.sequence,
-            )
-            worker.start()
+            if self.detector is not None:
+                worker = InferenceWorker(
+                    self.camera.slot,
+                    self.result_slot,
+                    self.detector,
+                    self.metrics,
+                    retain_source_frame=self.config.display_mode == "processed",
+                    initial_sequence=latest_after_warmup.sequence,
+                )
+                worker.start()
             if self.vlm_engine is not None:
                 vlm_worker = VlmWorker(
                     self.camera.slot,
@@ -817,14 +833,19 @@ class RealtimePipeline:
                 finished_ns=measurement_finished_ns,
             )
             runtime_info = getattr(self.detector, "runtime_info", None)
-            metrics["detector"] = (
-                runtime_info()
-                if callable(runtime_info)
-                else {"backend": self.detector.backend_name}
-            )
+            if self.detector is None:
+                metrics["detector"] = {"backend": "off", "loaded": False}
+            else:
+                metrics["detector"] = (
+                    runtime_info()
+                    if callable(runtime_info)
+                    else {"backend": self.detector.backend_name}
+                )
             metrics["pipeline"] = {
+                "mode": "vlm-only" if self.detector is None else "detector",
                 "display": self.config.display,
                 "display_mode": self.config.display_mode,
+                "display_layout": self.config.display_layout,
                 "max_latency_ms": self.config.max_latency_ms,
                 "warmup_iterations": self.config.warmup_iterations,
                 "vlm_interval_seconds": self.config.vlm_interval_seconds,
@@ -840,13 +861,21 @@ class RealtimePipeline:
     def _main_loop(
         self,
         cv2: Any,
-        worker: InferenceWorker,
+        worker: InferenceWorker | None,
         vlm_worker: VlmWorker | None,
     ) -> str:
         last_live_sequence = -1
         last_processed_sequence = -1
         next_report = time.monotonic() + 1.0
         started = time.monotonic()
+        subtitle_renderer = (
+            VlmSubtitleRenderer(
+                panel_height=self.config.subtitle_panel_height,
+                font_path=self.config.subtitle_font_path,
+            )
+            if self.config.display and self.config.display_layout == "subtitle"
+            else None
+        )
         while not self._stop_event.is_set():
             if (
                 self.config.duration_seconds is not None
@@ -855,11 +884,14 @@ class RealtimePipeline:
                 return "duration_elapsed"
 
             self.camera.raise_if_failed()
-            worker.raise_if_failed()
+            if worker is not None:
+                worker.raise_if_failed()
             if vlm_worker is not None:
                 vlm_worker.raise_if_failed()
             live_frame = self.camera.slot.consume_after(last_live_sequence, timeout=0.1)
             if live_frame is None:
+                if self.camera.slot.closed:
+                    return "source_exhausted"
                 continue
             last_live_sequence = live_frame.sequence
 
@@ -902,16 +934,24 @@ class RealtimePipeline:
                     now_ns,
                     self.config.vlm_caption_expiry_seconds,
                 )
-                preview = draw_on_host_frame(
-                    display_frame.bgr,
-                    usable_result.detections if usable_result else (),
-                    live_metrics,
-                    detection_sequence=(
-                        compatible_result.sequence if compatible_result is not None else None
-                    ),
-                    detection_age_ms=(detection_age_ms if compatible_result is not None else None),
-                    caption=caption,
-                )
+                if self.config.display_layout == "subtitle":
+                    assert subtitle_renderer is not None
+                    preview = subtitle_renderer.render(
+                        display_frame.bgr, live_metrics, caption=caption
+                    )
+                else:
+                    preview = draw_on_host_frame(
+                        display_frame.bgr,
+                        usable_result.detections if usable_result else (),
+                        live_metrics,
+                        detection_sequence=(
+                            compatible_result.sequence if compatible_result is not None else None
+                        ),
+                        detection_age_ms=(
+                            detection_age_ms if compatible_result is not None else None
+                        ),
+                        caption=caption,
+                    )
                 display_started_ns = time.monotonic_ns()
                 cv2.imshow(self.config.window_name, preview)
                 key = cv2.waitKey(1) & 0xFF
@@ -1017,6 +1057,217 @@ def draw_on_host_frame(
             cv2.LINE_AA,
         )
     return preview
+
+
+def _render_vlm_subtitle_panel(
+    width: int,
+    panel_height: int,
+    font_path: str,
+    live_metrics: dict[str, Any],
+    caption: VlmCaption | None,
+) -> np.ndarray:
+    from PIL import Image, ImageDraw
+
+    panel_rgb = np.full((panel_height, width, 3), (19, 21, 26), dtype=np.uint8)
+    panel_rgb[:4, :] = (63, 208, 212)
+    panel = Image.fromarray(panel_rgb)
+    draw = ImageDraw.Draw(panel)
+    header_font = _subtitle_font(font_path, 22)
+    caption_font = _subtitle_font(font_path, 34)
+    status_font = _subtitle_font(font_path, 18)
+
+    requests = int(live_metrics.get("vlm_requests", 0))
+    successes = int(live_metrics.get("vlm_successes", 0))
+    failures = int(live_metrics.get("vlm_failures", 0))
+    in_flight = int(live_metrics.get("vlm_in_flight", 0))
+    display_fps = float(live_metrics.get("display_fps", 0.0))
+    caption_age = live_metrics.get("vlm_caption_age_seconds")
+
+    draw.text((24, 14), "QWEN3-VL  实时画面字幕", font=header_font, fill=(169, 225, 229))
+    status = f"GPU · ROCm0     视频 {display_fps:.1f} FPS     VLM {successes}/{requests}"
+    status_width = _text_width(draw, status, status_font)
+    draw.text(
+        (max(24, width - status_width - 24), 17),
+        status,
+        font=status_font,
+        fill=(151, 158, 171),
+    )
+
+    if caption is None:
+        caption_text = "正在观察画面，首条字幕生成中……"
+    else:
+        caption_text = caption.text.strip()
+    caption_lines = _wrap_subtitle_text(
+        draw,
+        caption_text,
+        caption_font,
+        max_width=max(1, width - 64),
+        max_lines=2,
+    )
+    caption_y = 54
+    for line_index, line in enumerate(caption_lines):
+        draw.text(
+            (32, caption_y + line_index * 43),
+            line,
+            font=caption_font,
+            fill=(244, 246, 250),
+        )
+
+    if in_flight:
+        activity = "●  正在理解最新画面，视频保持实时播放"
+        activity_color = (76, 220, 185)
+    elif failures:
+        activity = f"字幕已保留 · 最近有 {failures} 次请求失败，系统将自动重试"
+        activity_color = (244, 183, 94)
+    elif caption is not None:
+        age_text = "刚刚" if caption_age is None else f"{float(caption_age):.1f} 秒前"
+        activity = f"字幕更新于 {age_text} · 按 Q 或 Esc 退出"
+        activity_color = (151, 158, 171)
+    else:
+        activity = "●  GPU 模型正在处理首帧，视频保持实时播放"
+        activity_color = (76, 220, 185)
+    draw.text(
+        (32, panel_height - 31),
+        activity,
+        font=status_font,
+        fill=activity_color,
+    )
+
+    return np.asarray(panel, dtype=np.uint8)[:, :, ::-1].copy()
+
+
+class VlmSubtitleRenderer:
+    """Cache Unicode text drawing so the 25/30 FPS video path stays lightweight."""
+
+    def __init__(
+        self,
+        *,
+        panel_height: int = 180,
+        font_path: str = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+        status_refresh_seconds: float = 1.0,
+    ) -> None:
+        if panel_height < 120:
+            raise ValueError("panel_height must be at least 120 pixels")
+        if status_refresh_seconds <= 0:
+            raise ValueError("status_refresh_seconds must be positive")
+        self.panel_height = panel_height
+        self.font_path = font_path
+        self.status_refresh_ns = int(status_refresh_seconds * 1e9)
+        self._panel_bgr: np.ndarray | None = None
+        self._semantic_key: tuple[object, ...] | None = None
+        self._next_status_refresh_ns = 0
+
+    def render(
+        self,
+        frame_bgr: np.ndarray,
+        live_metrics: dict[str, Any],
+        *,
+        caption: VlmCaption | None,
+    ) -> np.ndarray:
+        if frame_bgr.dtype != np.uint8 or frame_bgr.ndim != 3 or frame_bgr.shape[2] != 3:
+            raise ValueError("frame_bgr must be an HxWx3 uint8 array")
+
+        height, width = frame_bgr.shape[:2]
+        semantic_key = (
+            width,
+            None if caption is None else caption.sequence,
+            None if caption is None else caption.text,
+            int(live_metrics.get("vlm_requests", 0)),
+            int(live_metrics.get("vlm_successes", 0)),
+            int(live_metrics.get("vlm_failures", 0)),
+            int(live_metrics.get("vlm_in_flight", 0)),
+        )
+        now_ns = time.monotonic_ns()
+        if (
+            self._panel_bgr is None
+            or semantic_key != self._semantic_key
+            or now_ns >= self._next_status_refresh_ns
+        ):
+            self._panel_bgr = _render_vlm_subtitle_panel(
+                width,
+                self.panel_height,
+                self.font_path,
+                live_metrics,
+                caption,
+            )
+            self._semantic_key = semantic_key
+            self._next_status_refresh_ns = now_ns + self.status_refresh_ns
+
+        preview = np.empty((height + self.panel_height, width, 3), dtype=np.uint8)
+        preview[:height] = frame_bgr
+        preview[height:] = self._panel_bgr
+        return preview
+
+
+def draw_vlm_subtitle_frame(
+    frame_bgr: np.ndarray,
+    live_metrics: dict[str, Any],
+    *,
+    caption: VlmCaption | None,
+    panel_height: int = 180,
+    font_path: str = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+) -> np.ndarray:
+    """Place a Unicode subtitle panel below one frame without modifying the source."""
+
+    return VlmSubtitleRenderer(
+        panel_height=panel_height,
+        font_path=font_path,
+    ).render(frame_bgr, live_metrics, caption=caption)
+
+
+@lru_cache(maxsize=16)
+def _subtitle_font(font_path: str, size: int) -> Any:
+    from PIL import ImageFont
+
+    candidate = Path(font_path)
+    if not candidate.is_file():
+        candidate = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+    if not candidate.is_file():
+        raise FileNotFoundError(f"no subtitle font found; requested {font_path}")
+    return ImageFont.truetype(str(candidate), size=size)
+
+
+def _text_width(draw: Any, text: str, font: Any) -> int:
+    left, _top, right, _bottom = draw.textbbox((0, 0), text, font=font)
+    return right - left
+
+
+def _wrap_subtitle_text(
+    draw: Any,
+    text: str,
+    font: Any,
+    *,
+    max_width: int,
+    max_lines: int,
+) -> list[str]:
+    normalized = " ".join(text.split())
+    if not normalized:
+        return ["……"]
+
+    lines: list[str] = []
+    remaining = normalized
+    while remaining and len(lines) < max_lines:
+        candidate = ""
+        consumed = 0
+        for index, character in enumerate(remaining, start=1):
+            proposed = candidate + character
+            if candidate and _text_width(draw, proposed, font) > max_width:
+                break
+            candidate = proposed
+            consumed = index
+        if consumed == 0:
+            candidate = remaining[0]
+            consumed = 1
+        lines.append(candidate.strip())
+        remaining = remaining[consumed:].lstrip()
+
+    if remaining and lines:
+        ellipsis = "……"
+        last = lines[-1]
+        while last and _text_width(draw, last + ellipsis, font) > max_width:
+            last = last[:-1]
+        lines[-1] = last.rstrip("，。；、,.!！?？ ") + ellipsis
+    return lines
 
 
 def _class_color(class_id: int) -> tuple[int, int, int]:

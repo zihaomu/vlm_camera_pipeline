@@ -1,12 +1,13 @@
 [project]
 name = "vlm-camera-pipeline"
 version = "0.1.0"
-description = "Low-latency YOLO26 camera pipeline for AMD Ryzen AI MAX+ 395"
+description = "Low-latency YOLO26 and Qwen3-VL camera pipeline for AMD Ryzen AI MAX+ 395"
 readme = "doc/amd_395_pipeline.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "numpy>=1.26,<2",
   "opencv-python>=4.10,<5",
+  "pillow>=10,<13",
   "torch==2.9.1+rocm7.2.1.lw.gitff65f5bc",
   "torchaudio==2.9.0+rocm7.2.1.gite3c6ee2b",
   "torchvision==0.24.0+rocm7.2.1.gitb919bd0c",

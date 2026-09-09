@@ -7,6 +7,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol, Self
 
 import numpy as np
@@ -310,15 +311,20 @@ class CameraReader:
 
     def stop(self, timeout: float = 3.0) -> None:
         self._stop_event.set()
-        capture = self._capture
-        if capture is not None:
-            capture.release()
         thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout)
+        # Most V4L2 reads return promptly after the stop event. Avoid releasing
+        # the same OpenCV handle concurrently from this thread and the capture
+        # thread because amd_isp_capture can otherwise remain stuck in STREAMON.
+        if thread is not None and thread.is_alive():
+            capture = self._capture
+            if capture is not None:
+                capture.release()
+            thread.join(timeout)
         if thread is not None and thread.is_alive():
             raise CameraShutdownError(
-                f"camera capture thread did not stop within {timeout:g} seconds"
+                f"camera capture thread did not stop within {timeout * 2:g} seconds"
             )
 
     def raise_if_failed(self) -> None:
@@ -347,6 +353,184 @@ class CameraReader:
             elapsed_ns = self._capture_timestamps_ns[-1] - self._capture_timestamps_ns[0]
             return (
                 (len(self._capture_timestamps_ns) - 1) * 1e9 / elapsed_ns if elapsed_ns > 0 else 0.0
+            )
+
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def __enter__(self) -> Self:
+        return self.start()
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self.stop()
+
+
+@dataclass(frozen=True, slots=True)
+class VideoFileConfig:
+    path: str
+    width: int = 1280
+    height: int = 720
+    fps: float | None = None
+    loop: bool = True
+
+    def __post_init__(self) -> None:
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError("video width and height must be positive")
+        if self.fps is not None and self.fps <= 0:
+            raise ValueError("video FPS override must be positive")
+
+
+class VideoFileReader:
+    """Replay a video at wall-clock speed into the same latest-frame contract."""
+
+    def __init__(
+        self,
+        config: VideoFileConfig,
+        slot: LatestFrameSlot | None = None,
+    ) -> None:
+        self.config = config
+        self.slot = slot or LatestFrameSlot()
+        self._capture: CaptureLike | None = None
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+        self._stats_lock = threading.Lock()
+        self._error: BaseException | None = None
+        self._published_frames = 0
+        self._read_failures = 0
+        self._capture_timestamps_ns: deque[int] = deque(maxlen=180)
+        self._negotiated: NegotiatedCameraFormat | None = None
+
+    def start(self) -> Self:
+        import cv2
+
+        if self._thread is not None and self._thread.is_alive():
+            raise RuntimeError("VideoFileReader is already running")
+        path = Path(self.config.path)
+        if not path.is_file():
+            raise CameraOpenError(f"video file not found: {path}")
+        capture = cv2.VideoCapture(str(path))
+        if not capture.isOpened():
+            capture.release()
+            raise CameraOpenError(f"unable to open video file {path}")
+        source_fps = float(capture.get(cv2.CAP_PROP_FPS))
+        playback_fps = self.config.fps or (source_fps if source_fps > 0 else 30.0)
+        packed_fourcc = capture.get(cv2.CAP_PROP_FOURCC)
+        self._negotiated = NegotiatedCameraFormat(
+            width=self.config.width,
+            height=self.config.height,
+            fps=playback_fps,
+            fourcc=decode_fourcc(packed_fourcc).rstrip("\x00") or "FILE",
+        )
+        self._capture = capture
+        self._stop_event.clear()
+        self._error = None
+        self._thread = threading.Thread(
+            target=self._capture_loop,
+            name="video-file-replay",
+            daemon=False,
+        )
+        self._thread.start()
+        return self
+
+    def _capture_loop(self) -> None:
+        import cv2
+
+        capture = self._capture
+        negotiated = self._negotiated
+        assert capture is not None and negotiated is not None
+        sequence = -1
+        next_publish_at = time.monotonic()
+        period_seconds = 1.0 / negotiated.fps
+        consecutive_failures = 0
+        try:
+            while not self._stop_event.is_set():
+                ok, frame = capture.read()
+                if not ok or frame is None:
+                    if self.config.loop:
+                        capture.set(cv2.CAP_PROP_POS_FRAMES, 0.0)
+                        consecutive_failures += 1
+                        if consecutive_failures > 2:
+                            raise CameraReadError(
+                                f"video {self.config.path} could not restart after EOF"
+                            )
+                        continue
+                    return
+                consecutive_failures = 0
+
+                if frame.shape[:2] != (negotiated.height, negotiated.width):
+                    frame = cv2.resize(
+                        frame,
+                        (negotiated.width, negotiated.height),
+                        interpolation=cv2.INTER_AREA,
+                    )
+                if not frame.flags.c_contiguous:
+                    frame = np.ascontiguousarray(frame)
+
+                wait_seconds = max(0.0, next_publish_at - time.monotonic())
+                if self._stop_event.wait(wait_seconds):
+                    return
+                captured_ns = time.monotonic_ns()
+                frame.setflags(write=False)
+                sequence += 1
+                self.slot.publish(CapturedFrame(sequence, captured_ns, frame))
+                with self._stats_lock:
+                    self._published_frames += 1
+                    self._capture_timestamps_ns.append(captured_ns)
+                next_publish_at += period_seconds
+                now = time.monotonic()
+                if next_publish_at < now - period_seconds:
+                    next_publish_at = now
+        except Exception as exc:  # noqa: BLE001 - propagate replay failures to the owner.
+            self._error = exc
+            self._stop_event.set()
+        finally:
+            capture.release()
+            self.slot.close()
+
+    def stop(self, timeout: float = 3.0) -> None:
+        self._stop_event.set()
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout)
+        if thread is not None and thread.is_alive():
+            capture = self._capture
+            if capture is not None:
+                capture.release()
+            thread.join(timeout)
+        if thread is not None and thread.is_alive():
+            raise CameraShutdownError(
+                f"video replay thread did not stop within {timeout * 2:g} seconds"
+            )
+
+    def raise_if_failed(self) -> None:
+        if self._error is not None:
+            raise CameraError("video replay worker failed") from self._error
+
+    @property
+    def negotiated(self) -> NegotiatedCameraFormat | None:
+        return self._negotiated
+
+    @property
+    def published_frames(self) -> int:
+        with self._stats_lock:
+            return self._published_frames
+
+    @property
+    def read_failures(self) -> int:
+        with self._stats_lock:
+            return self._read_failures
+
+    @property
+    def capture_fps(self) -> float:
+        with self._stats_lock:
+            if len(self._capture_timestamps_ns) < 2:
+                return 0.0
+            elapsed_ns = self._capture_timestamps_ns[-1] - self._capture_timestamps_ns[0]
+            return (
+                (len(self._capture_timestamps_ns) - 1) * 1e9 / elapsed_ns
+                if elapsed_ns > 0
+                else 0.0
             )
 
     @property

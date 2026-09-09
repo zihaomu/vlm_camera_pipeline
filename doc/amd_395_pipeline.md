@@ -1,6 +1,6 @@
 # Ultralytics YOLO26 在 AMD Ryzen AI MAX+ 395（含 PRO 395）上的本地摄像头实时部署方案
 
-> 文档状态：M0/M1/M2 已通过并归档；M5 Qwen3-VL GPU 与 30 秒实时窗口 Gate 已通过
+> 文档状态：M0/M1/M2 已通过并归档；M5 Qwen3-VL GPU、YOLO+VLM 与纯 VLM 字幕窗口均已通过短测
 >
 > 编写日期：2026-09-08
 >
@@ -31,6 +31,8 @@
 | 2026-09-08 17:34 CST | M2 30 分钟实时窗口 Gate | **通过** | 1800.130 秒；camera 53,680 帧、inference 53,679 帧、display 53,666 帧；capture/inference/display 29.820/29.820/29.812 FPS；capture-to-display p95 14.951 ms；丢 1 帧、0 读取失败；RSS 峰值增长 9.633 MiB；测试时段 0 个 GPU reset/fault/hang；`output/realtime/m2-gate.json` 14/14 通过 |
 | 2026-09-08 19:25 CST | M5 Qwen3-VL 独立 GPU Gate | **通过** | 两份 GGUF 大小与 SHA-256 一致；真实 JPEG 请求 2.195 秒并生成正确字幕；主模型 37/37 层 offload、mmproj=`ROCm0`、进程持有 `/dev/kfd`，采样峰值 GPU use 87%、VRAM used 12,545,843,200 bytes；`output/bringup/qwen3-vl-gpu-smoke.json` |
 | 2026-09-08 19:26 CST | M5 YOLO + VLM 实时窗口 Gate | **通过（30 秒短测）** | 30.008 秒；capture/inference/display 29.859/25.893/29.793 FPS，capture-to-display p95 28.721 ms，0 camera failure；VLM 6/6 成功、0 失败、请求均值 2.119 秒、queue depth 1；0 GPU reset/fault/hang；`output/realtime/m5-gate.json` 25/25 通过 |
+| 2026-09-09 11:18 CST | M5 纯 VLM 中文字幕摄像头 Demo | **通过（15 秒短测）** | YOLO 未加载（detector=`off/loaded=false`）；NV12 720p30 capture/display 29.878/28.081 FPS，显示 422/449 帧，display p95 67.964 ms；VLM 6/6 成功、0 失败、均值 1.649 秒；固定视频下方 Unicode 字幕面板；`output/realtime/metrics-vlm-camera-display-15s.json` |
+| 2026-09-09 11:16 CST | M5 纯 VLM 循环视频 Demo | **通过（15 秒短测）** | 锁定 `sidewalk.mp4` 按原始 25 FPS 实时播放；capture/display 25.013/24.681 FPS，显示 371/376 帧；VLM 6/6 成功、均值 1.761 秒；`output/realtime/metrics-vlm-video-display-15s.json` |
 
 进度表只记录已经在本机执行并取得证据的结果；设计目标不会提前标记为完成。运行日志默认不提交 Git，精简后的环境、版本与 SHA 身份写入 `native-lock/` 后提交。
 
@@ -38,9 +40,10 @@
 
 目标是在一台独立的 AMD Ryzen AI MAX+ 395（含 PRO 395）台式机上原生部署 YOLO26 pipeline，通过 USB/UVC 或板载摄像头持续采集画面，在本地窗口中实时显示检测框、类别、置信度、FPS 和延迟；按需增加硬件录制与低频 Qwen3-VL 场景字幕。
 
-本文所称“实时 VLM demo”默认指：摄像头持续采集、YOLO 持续逐帧/按最新帧检测、Qwen3-VL
-以低频最新快照异步生成场景字幕。它不表示 Qwen3-VL 8B 能以 30 FPS 对每一帧做语言生成；
-若需求是逐帧 VLM，需要另选更小模型、专用视觉编码器或不同硬件预算。
+本文所称“实时 VLM demo”包括两种模式：YOLO+VLM 组合模式，以及完全不加载 YOLO 的纯
+VLM 字幕模式。纯 VLM 模式让摄像头或循环视频持续按 25/30 FPS 播放，Qwen3-VL 以低频
+最新快照异步生成场景字幕。它不表示 Qwen3-VL 8B 能以 30 FPS 对每一帧做语言生成；若
+需求是逐帧 VLM，需要另选更小模型、专用视觉编码器或不同硬件预算。
 
 这不是把云端命令原样复制到本机。云端版本和本地版本的输入、调度与性能边界不同：
 
@@ -1353,7 +1356,37 @@ uv run --frozen python scripts/evaluate_m2_metrics.py \
 - [x] 独立 worker、latest snapshot depth 1、caption expiry；
 - [x] VLM timeout/failure isolation 与有限时清理；
 - [x] 30 秒真实窗口 on/off 初步性能对照；
+- [x] 不初始化 YOLO 的纯 VLM 中文字幕窗口与循环视频入口；
 - [ ] VLM on 的 30 分钟长稳 Gate（当前不阻塞短时实时 Demo）。
+
+纯 VLM 摄像头 Demo：
+
+```bash
+cd /home/amd/work/vlm_camera_pipeline
+uv run --frozen python scripts/run_vlm_demo.py \
+  --device /dev/video0 --fourcc NV12 \
+  --width 1280 --height 720 --camera-fps 30 \
+  --vlm-interval 3
+```
+
+摄像头不可用时可以用锁定视频按原始帧率循环验证完整 UI：
+
+```bash
+uv run --frozen python scripts/run_vlm_demo.py \
+  --video-file third_party/notebook/ultralytics_yolo26/data/sidewalk.mp4 \
+  --vlm-interval 3
+```
+
+该入口将 detector 设为 `None`，不会导入或构造 Ultralytics 模型。显示主线程持续消费最新
+视频帧；VLM worker 每 3 秒最多提交一次最新快照，请求执行期间保留上一条字幕。视频下方
+固定 180 px 深色面板使用 Noto Sans CJK 显示中文，文字面板仅在字幕/状态改变或每秒状态
+刷新时重绘，避免 Unicode 渲染拖慢每一帧。
+
+已知摄像头边界（2026-09-09）：本机 `amd_isp_capture` 在多次打开/关闭后偶发进入设备节点
+仍存在、格式查询正常但不再发布首帧的状态。确认无进程持有 `/dev/video0` 后，仅重载
+`amd_capture` 与 `amd_isp4`（未重载 `amdgpu`）可恢复，随后完成了上述 15 秒摄像头短测；
+但再次复用设备时仍复现过一次。因此摄像头短测结果有效，但暂不标记为长稳通过；当前持续
+展示使用锁定 `sidewalk.mp4` 循环源，摄像头驱动恢复另列稳定性事项。
 
 主线只强制 `M0 -> M1 -> M2`。M2 通过后，M3（GPU 优化）、M4（录制）和 M5（VLM）是
 三个独立分支，可按需求并行或分别验证，彼此不作为前置条件；每个分支失败都必须回到已
@@ -1393,7 +1426,8 @@ vlm_camera_pipeline/
 │   ├── evaluate_m5_metrics.py
 │   ├── setup_native_gfx1151.sh
 │   ├── setup_vlm_gfx1151.sh
-│   └── run_camera.py
+│   ├── run_camera.py
+│   └── run_vlm_demo.py
 ├── tests/
 │   ├── test_latest_frame_queue.py
 │   ├── test_camera_replay.py
@@ -1401,7 +1435,8 @@ vlm_camera_pipeline/
 │   ├── test_m2_gate.py
 │   ├── test_m5_gate.py
 │   ├── test_document_contract.py
-│   └── test_vlm_worker.py
+│   ├── test_vlm_worker.py
+│   └── test_vlm_demo.py
 ├── third_party/
 │   ├── notebook/                 # 锁定 commit 的只读上游参考
 │   ├── ultralytics/              # 锁定 fork
@@ -1413,6 +1448,8 @@ vlm_camera_pipeline/
     └── realtime/
         ├── metrics-camera-30m.json
         ├── metrics-yolo-vlm-display-30s.json
+        ├── metrics-vlm-camera-display-15s.json
+        ├── metrics-vlm-video-display-15s.json
         ├── m2-rss-samples.csv
         ├── m2-gate.json
         ├── m5-gate.json
@@ -1509,11 +1546,12 @@ VA-API 或 Qwen 失败而把整个部署判为不可用。
 [x] uv 环境中的 Python/PyTorch gfx1151 smoke（2026-09-08）
 [x] yolo26x.pt SHA-256 一致（2026-09-08）
 [x] YOLO26x Route P 真实摄像头 GPU 短基线正确，15 秒窗口 29.61 inference FPS（2026-09-08）
-[x] latest-frame/VLM worker synthetic + 锁定 sidewalk.mp4 replay/metrics/文档合同 tests：18/18 通过（2026-09-08）
+[x] latest-frame/VLM worker synthetic + 锁定 sidewalk.mp4 replay/metrics/文档合同 tests：23/23 通过（2026-09-09）
 [x] camera realtime 30 分钟 Gate：29.820 inference FPS / 14.951 ms display p95 / 0 read failure（2026-09-08）
 [x] M0/M1 environment、metrics、日志与 PyTorch 回放截图归档（2026-09-08）
 [x] VLM：两份 GGUF SHA-256、native llama.cpp、全层/mmproj ROCm0 Gate（2026-09-08）
 [x] YOLO + VLM：30 秒实时窗口、VLM 6/6 成功、0 camera/GPU fault（2026-09-08）
+[x] 纯 VLM：中文字幕面板、摄像头 28.081 display FPS、循环视频 24.681/25 FPS（2026-09-09）
 ```
 
 按需启用：

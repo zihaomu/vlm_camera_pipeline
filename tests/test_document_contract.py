@@ -60,3 +60,26 @@ def test_documented_cli_contract_is_present_in_the_real_parser() -> None:
         option for action in build_parser()._actions for option in action.option_strings
     }
     assert documented_flags <= actual_flags
+
+
+def test_documented_vlm_only_demo_contract_is_present() -> None:
+    from scripts.run_vlm_demo import build_parser
+
+    documented_flags = {
+        "--device",
+        "--video-file",
+        "--loop-video",
+        "--video-fps",
+        "--vlm-interval",
+        "--vlm-server",
+        "--vlm-model",
+        "--vlm-mmproj",
+        "--subtitle-height",
+        "--subtitle-font",
+        "--duration-seconds",
+        "--metrics-json",
+    }
+    actual_flags = {
+        option for action in build_parser()._actions for option in action.option_strings
+    }
+    assert documented_flags <= actual_flags

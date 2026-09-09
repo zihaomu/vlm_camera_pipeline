@@ -2,11 +2,14 @@
 
 AMD Ryzen AI MAX+ 395 / Radeon 8060S（`gfx1151`）本地低延迟摄像头 Demo。
 
-当前已实现 M0-M2 的 PyTorch ROCm 主路径和 M5 的 Qwen3-VL GPU 异步字幕：
+当前已实现 M0-M2 的 PyTorch ROCm 主路径、M5 的 Qwen3-VL GPU 异步字幕，以及不加载
+YOLO 的纯 VLM 中文字幕 Demo：
 
 ```text
 V4L2 camera -> depth-1 latest frame -> YOLO26x ROCm -> latest result -> OpenCV UI
                                   \-> depth-1 VLM snapshot -> Qwen3-VL ROCm -> caption
+V4L2/video  -> 25/30 FPS live display -> fixed subtitle panel
+                    \-> every 3 s latest frame -> Qwen3-VL ROCm -> Chinese caption
 ```
 
 本机 M2 长稳 Gate 已通过：持续 1800.130 秒，capture/inference/display 为
@@ -17,6 +20,10 @@ reset/fault/hang 0。完整证据见 `output/realtime/metrics-camera-30m.json` �
 M5 的 30 秒真实窗口短测为 capture/inference/display 29.859/25.893/29.793 FPS，显示 P95
 28.721 ms，Qwen3-VL 请求 6/6 成功、均值 2.119 秒。主模型 37/37 层和视觉 mmproj 均在
 `ROCm0`；程序拒绝部分 offload 或 CPU fallback。
+
+纯 VLM 摄像头窗口的 15 秒实测为 capture/display `29.878/28.081 FPS`，VLM `6/6`
+成功、平均 `1.649 秒`，检测器状态为 `off/loaded=false`。字幕 Unicode 面板只在内容或状态
+变化时重绘，视频帧不等待 VLM 推理。
 
 Python 环境只由 `uv` 管理，`.venv`、依赖 cache 和应用配置均位于本仓库内。MIGraphX 和
 VA-API 录制属于后续独立里程碑。
@@ -44,6 +51,33 @@ uv run --frozen --extra vlm python scripts/check_vlm_gpu.py
 
 ## 运行实时 Demo
 
+只运行 Qwen3-VL，并在视频下方显示中文字幕：
+
+```bash
+uv run --frozen python scripts/run_vlm_demo.py \
+  --device /dev/video0 --fourcc NV12 \
+  --width 1280 --height 720 --camera-fps 30 \
+  --vlm-interval 3
+```
+
+也可用仓库内锁定视频循环演示；它按视频原始 25 FPS 播放，不会高速读取：
+
+```bash
+uv run --frozen python scripts/run_vlm_demo.py \
+  --video-file third_party/notebook/ultralytics_yolo26/data/sidewalk.mp4 \
+  --vlm-interval 3
+```
+
+两种纯 VLM 模式都不会构造 YOLO/PyTorch detector。视频持续播放，VLM 独立读取深度为 1 的
+最新快照；上一条字幕保留到新字幕就绪，并显示“正在理解”状态。按 `q`、Esc 或 `Ctrl+C`
+退出。
+
+本机 `amd_isp_capture` 在重复开关摄像头后存在偶发不发布首帧的已知问题；循环视频入口不受
+影响。摄像头 15 秒短测已通过，但在驱动恢复完成长期验证前不宣称摄像头长稳通过，细节见
+实施文档的 M5 小节。
+
+运行仅 YOLO 的摄像头 Demo：
+
 ```bash
 uv run --frozen python scripts/run_camera.py \
   --device /dev/video0 \
@@ -54,7 +88,7 @@ uv run --frozen python scripts/run_camera.py \
   --display --record off --vlm off
 ```
 
-按 `q`、Esc 或 `Ctrl+C` 可退出。无窗口 smoke 示例：
+无窗口 YOLO smoke 示例：
 
 ```bash
 uv run --frozen python scripts/run_camera.py \
