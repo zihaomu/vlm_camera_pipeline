@@ -65,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--yolo-model", default="models/yolo26x.onnx")
     parser.add_argument(
         "--migraphx-cache-dir",
-        default="models/ort-migraphx-cache/gfx1151-yolo26x",
+        default="models/ort-migraphx-cache/gfx1151-yolo26x-strict-iobinding-v1",
     )
     parser.add_argument("--gpu-device", default="cuda:0")
     parser.add_argument("--imgsz", type=int, default=640)

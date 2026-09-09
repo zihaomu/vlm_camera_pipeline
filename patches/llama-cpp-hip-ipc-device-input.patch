@@ -1,0 +1,1778 @@
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index 3cb08767..1d451ab0 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -627,6 +627,7 @@ struct common_speculative_impl_draft_eagle3 : public common_speculative_impl {
+                 /*.n_seq_id =*/ nullptr,
+                 /*.seq_id   =*/ nullptr,
+                 /*.logits   =*/ nullptr,
++                /*.embd_device =*/ 0,
+             };
+             const int32_t rc = llama_encode(ctx_dft, enc_batch);
+             if (rc != 0) {
+@@ -1072,6 +1073,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+                     /*.n_seq_id =*/ nullptr,
+                     /*.seq_id   =*/ nullptr,
+                     /*.logits   =*/ nullptr,
++                    /*.embd_device =*/ 0,
+                 };
+ 
+                 int32_t rc = llama_encode(ctx_dft, enc_batch);
+diff --git a/ggml/include/ggml-cuda.h b/ggml/include/ggml-cuda.h
+index 1cd81eea..b2bf4901 100644
+--- a/ggml/include/ggml-cuda.h
++++ b/ggml/include/ggml-cuda.h
+@@ -27,6 +27,24 @@ GGML_BACKEND_API bool ggml_backend_is_cuda(ggml_backend_t backend);
+ // device buffer
+ GGML_BACKEND_API ggml_backend_buffer_type_t ggml_backend_cuda_buffer_type(int device);
+ 
++// Copy from an existing device allocation into a CUDA/ROCm tensor without staging through host memory.
++// ready_event may be NULL or a cudaEvent_t/hipEvent_t represented as an opaque pointer. When supplied,
++// the backend stream waits for it before issuing the device-to-device copy.
++GGML_BACKEND_API bool ggml_backend_cuda_tensor_set_from_device_ptr(
++        struct ggml_tensor * tensor,
++        const void * device_ptr,
++        size_t size,
++        int source_device,
++        void * ready_event);
++
++// Borrow the storage of a contiguous CUDA/ROCm tensor. The returned pointer remains owned by
++// the tensor scheduler and is valid only until that graph is reset or reallocated.
++GGML_BACKEND_API bool ggml_backend_cuda_tensor_get_device_ptr(
++        const struct ggml_tensor * tensor,
++        const void ** device_ptr,
++        size_t * size,
++        int * physical_device);
++
+ // conduct allreduce operation between devices
+ GGML_BACKEND_API bool ggml_backend_cuda_allreduce_tensor(ggml_backend_t * backends, struct ggml_tensor ** tensors, size_t n_backends);
+ 
+diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
+index ba5f673c..9b31fc77 100644
+--- a/ggml/src/ggml-cuda/common.cuh
++++ b/ggml/src/ggml-cuda/common.cuh
+@@ -1469,7 +1469,29 @@ struct ggml_backend_cuda_context {
+     cudaStream_t stream(int device, int stream) {
+         if (streams[device][stream] == nullptr) {
+             ggml_cuda_set_device(device);
++#if defined(GGML_USE_HIP)
++            const char * priority_env = std::getenv("GGML_HIP_STREAM_PRIORITY");
++            if (priority_env != nullptr && priority_env[0] != '\0') {
++                char * end = nullptr;
++                const long requested = std::strtol(priority_env, &end, 10);
++                GGML_ASSERT(end != priority_env && end != nullptr && end[0] == '\0');
++                int least_priority = 0;
++                int greatest_priority = 0;
++                CUDA_CHECK(cudaDeviceGetStreamPriorityRange(&least_priority, &greatest_priority));
++                const int priority = std::max(
++                    greatest_priority,
++                    std::min(least_priority, static_cast<int>(requested)));
++                CUDA_CHECK(cudaStreamCreateWithPriority(
++                    &streams[device][stream], cudaStreamNonBlocking, priority));
++                GGML_LOG_INFO(
++                    "%s: HIP stream %d priority=%d (range %d..%d)\n",
++                    __func__, stream, priority, greatest_priority, least_priority);
++            } else {
++                CUDA_CHECK(cudaStreamCreateWithFlags(&streams[device][stream], cudaStreamNonBlocking));
++            }
++#else
+             CUDA_CHECK(cudaStreamCreateWithFlags(&streams[device][stream], cudaStreamNonBlocking));
++#endif
+         }
+         return streams[device][stream];
+     }
+@@ -1649,4 +1671,3 @@ static __inline__ void ggml_cuda_kernel_launch(Kernel kernel, const ggml_cuda_ke
+     kernel<<<launch_params.block_nums, launch_params.block_dims, launch_params.shmem, launch_params.stream>>>(std::forward<Args>(args)... );
+     CUDA_CHECK(cudaGetLastError());
+ }
+-
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index e73a7b89..d575e399 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -745,6 +745,86 @@ static bool ggml_backend_buffer_is_cuda(ggml_backend_buffer_t buffer) {
+     return buffer->iface.free_buffer == ggml_backend_cuda_buffer_free_buffer;
+ }
+ 
++bool ggml_backend_cuda_tensor_set_from_device_ptr(
++        ggml_tensor * tensor,
++        const void * device_ptr,
++        size_t size,
++        int source_device,
++        void * ready_event) {
++    if (tensor == nullptr || tensor->buffer == nullptr || device_ptr == nullptr) {
++        GGML_LOG_ERROR("%s: null tensor, buffer, or source device pointer\n", __func__);
++        return false;
++    }
++    if (!ggml_backend_buffer_is_cuda(tensor->buffer)) {
++        GGML_LOG_ERROR(
++            "%s: destination tensor %s is in non-%s buffer %s\n",
++            __func__,
++            tensor->name,
++            GGML_CUDA_NAME,
++            ggml_backend_buffer_name(tensor->buffer));
++        return false;
++    }
++    if (size != ggml_nbytes(tensor)) {
++        GGML_LOG_ERROR(
++            "%s: byte size mismatch source=%zu destination=%zu\n",
++            __func__,
++            size,
++            ggml_nbytes(tensor));
++        return false;
++    }
++    auto * ctx = static_cast<ggml_backend_cuda_buffer_context *>(tensor->buffer->context);
++    if (ggml_cuda_get_physical_device(ctx->device) != source_device) {
++        GGML_LOG_ERROR(
++            "%s: physical device mismatch source=%d destination=%d\n",
++            __func__,
++            source_device,
++            ggml_cuda_get_physical_device(ctx->device));
++        return false;
++    }
++    ggml_cuda_set_device(ctx->device);
++    if (ready_event != nullptr) {
++        CUDA_CHECK(cudaStreamWaitEvent(cudaStreamPerThread, static_cast<cudaEvent_t>(ready_event), 0));
++    }
++    CUDA_CHECK(cudaMemcpyAsync(
++        tensor->data,
++        device_ptr,
++        size,
++        cudaMemcpyDeviceToDevice,
++        cudaStreamPerThread));
++    CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
++    return true;
++}
++
++bool ggml_backend_cuda_tensor_get_device_ptr(
++        const ggml_tensor * tensor,
++        const void ** device_ptr,
++        size_t * size,
++        int * physical_device) {
++    if (tensor == nullptr || tensor->buffer == nullptr || tensor->data == nullptr ||
++        device_ptr == nullptr || size == nullptr || physical_device == nullptr) {
++        GGML_LOG_ERROR("%s: null tensor, tensor storage, or output argument\n", __func__);
++        return false;
++    }
++    if (!ggml_backend_buffer_is_cuda(tensor->buffer)) {
++        GGML_LOG_ERROR(
++            "%s: tensor %s is in non-%s buffer %s\n",
++            __func__,
++            tensor->name,
++            GGML_CUDA_NAME,
++            ggml_backend_buffer_name(tensor->buffer));
++        return false;
++    }
++    if (!ggml_is_contiguous(tensor)) {
++        GGML_LOG_ERROR("%s: tensor %s is not contiguous\n", __func__, tensor->name);
++        return false;
++    }
++    auto * ctx = static_cast<ggml_backend_cuda_buffer_context *>(tensor->buffer->context);
++    *device_ptr = tensor->data;
++    *size = ggml_nbytes(tensor);
++    *physical_device = ggml_cuda_get_physical_device(ctx->device);
++    return true;
++}
++
+ static void * ggml_backend_cuda_buffer_get_base(ggml_backend_buffer_t buffer) {
+     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
+     return ctx->dev_ptr;
+diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
+index d01f1533..b6b93e46 100644
+--- a/ggml/src/ggml-cuda/vendors/hip.h
++++ b/ggml/src/ggml-cuda/vendors/hip.h
+@@ -115,7 +115,9 @@
+ #define cuMemGetAllocationGranularity hipMemGetAllocationGranularity
+ #define CUmemAllocationProp hipMemAllocationProp
+ #define cuDeviceGetAttribute hipDeviceGetAttribute
++#define cudaDeviceGetStreamPriorityRange hipDeviceGetStreamPriorityRange
+ #define cudaStreamCreateWithFlags hipStreamCreateWithFlags
++#define cudaStreamCreateWithPriority hipStreamCreateWithPriority
+ #define cudaStreamDestroy hipStreamDestroy
+ #define cudaStreamFireAndForget hipStreamFireAndForget
+ #define cudaStreamNonBlocking hipStreamNonBlocking
+diff --git a/include/llama.h b/include/llama.h
+index a311ac20..4148e39c 100644
+--- a/include/llama.h
++++ b/include/llama.h
+@@ -250,6 +250,11 @@ extern "C" {
+         int32_t      *  n_seq_id;
+         llama_seq_id ** seq_id;
+         int8_t       *  logits;   // TODO: rename this to "output"
++
++        // 0 means `embd` points to host memory (the standard API contract). A positive value
++        // means `embd` is a device pointer on physical GPU `embd_device - 1`; this extension is
++        // used only by the strict local mtmd HIP bridge.
++        int32_t embd_device;
+     } llama_batch;
+ 
+     enum llama_model_kv_override_type {
+diff --git a/src/llama-batch.cpp b/src/llama-batch.cpp
+index 2b98a552..c29a047d 100644
+--- a/src/llama-batch.cpp
++++ b/src/llama-batch.cpp
+@@ -225,6 +225,7 @@ bool llama_batch_allocr::init(
+             /*.seq_idx      =*/ this->seq_idx.data(),
+             /*.output       =*/ batch.logits,
+             /*.data         =*/ {},
++            /*.embd_device  =*/ batch.embd_device,
+         };
+ 
+         ubatch_print(ubatch, debug);
+@@ -431,6 +432,7 @@ llama_ubatch llama_batch_allocr::ubatch_reserve(uint32_t n_seq_tokens, uint32_t
+         /*.seq_idx      =*/ udata->seq_idx.data(),
+         /*.output       =*/ udata->output.data(),
+         /*.data         =*/ std::move(udata),
++        /*.embd_device  =*/ 0,
+     };
+ 
+     return res;
+@@ -753,7 +755,8 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
+ 
+     auto udata = std::make_shared<llama_ubatch::data_t>();
+ 
+-    const int64_t n_embd_all = batch.embd ? (int64_t) n_tokens*n_embd : 0;
++    const bool embd_is_device = batch.embd && batch.embd_device > 0;
++    const int64_t n_embd_all = batch.embd && !embd_is_device ? (int64_t) n_tokens*n_embd : 0;
+     const int64_t n_pos_all  =              (int64_t) n_tokens*n_pos_per_embd;
+ 
+     udata->token     .resize(n_tokens);
+@@ -774,10 +777,15 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
+             udata->token[i] = batch.token[idxs[i]];
+         }
+ 
+-        if (batch.embd) {
++        if (batch.embd && !embd_is_device) {
+             memcpy(udata->embd.data() + i*n_embd, batch.embd + (int64_t) idxs[i]*n_embd, n_embd*sizeof(float));
+         }
+ 
++        if (embd_is_device && i > 0) {
++            GGML_ASSERT(idxs[i] == idxs[0] + (int32_t) i &&
++                "device embedding batches must remain contiguous");
++        }
++
+         for (size_t j = 0; j < (size_t)n_pos_per_embd; ++j) {
+             // if we are using M-RoPE
+             //     if the current batch is text, we need to broadcast the same position across all RoPE sections
+@@ -824,7 +832,10 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
+         /*.n_pos        =*/ n_pos_per_embd,
+ 
+         /*.token        =*/ batch.token ? udata->token.data() : nullptr,
+-        /*.embd         =*/ batch.embd ? udata->embd.data() : nullptr,
++        /*.embd         =*/ embd_is_device
++            ? reinterpret_cast<float *>(reinterpret_cast<uint8_t *>(batch.embd) +
++                (size_t) idxs[0] * n_embd * sizeof(float))
++            : (batch.embd ? udata->embd.data() : nullptr),
+         /*.pos          =*/ udata->pos.data(),
+         /*.n_seq_id     =*/ udata->n_seq_id.data(),
+         /*.seq_id       =*/ udata->seq_id.data(),
+@@ -832,6 +843,7 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
+         /*.seq_idx      =*/ udata->seq_idx.data(),
+         /*.output       =*/ udata->output.data(),
+         /*.data         =*/ std::move(udata),
++        /*.embd_device  =*/ batch.embd_device,
+     };
+ 
+     if (debug > 0) {
+@@ -939,6 +951,7 @@ struct llama_batch llama_batch_get_one(
+         /*n_seq_id =*/ nullptr,
+         /*seq_id   =*/ nullptr,
+         /*logits   =*/ nullptr,
++        /*embd_device =*/ 0,
+     };
+ }
+ 
+@@ -951,6 +964,7 @@ struct llama_batch llama_batch_init(int32_t n_tokens_alloc, int32_t embd, int32_
+         /*n_seq_id =*/ nullptr,
+         /*seq_id   =*/ nullptr,
+         /*logits   =*/ nullptr,
++        /*embd_device =*/ 0,
+     };
+ 
+     if (embd) {
+@@ -974,7 +988,7 @@ struct llama_batch llama_batch_init(int32_t n_tokens_alloc, int32_t embd, int32_
+ 
+ void llama_batch_free(struct llama_batch batch) {
+     if (batch.token)    free(batch.token);
+-    if (batch.embd)     free(batch.embd);
++    if (batch.embd && batch.embd_device == 0) free(batch.embd);
+     if (batch.pos)      free(batch.pos);
+     if (batch.n_seq_id) free(batch.n_seq_id);
+     if (batch.seq_id) {
+diff --git a/src/llama-batch.h b/src/llama-batch.h
+index a3d1889d..ca59313a 100644
+--- a/src/llama-batch.h
++++ b/src/llama-batch.h
+@@ -66,6 +66,9 @@ struct llama_ubatch {
+ 
+     // the llama_ubatch pointers above point to this data if set. otherwise - point to external non-owning data
+     std::shared_ptr<data_t> data;
++
++    // Same encoded physical-device convention as llama_batch::embd_device.
++    int32_t embd_device;
+ };
+ 
+ // a helper for sanitizing, fulfilling and splitting a batch
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index eed041ee..c19f5254 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -12,6 +12,10 @@
+ #include "llama-ext.h"
+ #include "llama.h"
+ 
++#if defined(GGML_USE_CUDA)
++#include "ggml-cuda.h"
++#endif
++
+ #include <cinttypes>
+ #include <cmath>
+ #include <cstring>
+@@ -1331,10 +1335,10 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
+     if (!graph_reuse_disable && res->can_reuse(gparams)) {
+         //LLAMA_LOG_DEBUG("%s: reusing previous graph\n", __func__);
+ 
+-        // with pipeline parallelism, the previous graph_compute_async may still be running
+-        // on the GPU. we must synchronize before set_inputs to avoid overwriting input tensors
+-        // that the previous compute is still reading.
+-        if (cparams.pipeline_parallel) {
++        // The previous graph_compute_async may still be running with pipeline parallelism or
++        // between strict device-embedding micro-batches. Synchronize scheduler streams before
++        // overwriting the reused input tensor; this is not a process-wide hipDeviceSynchronize.
++        if (cparams.pipeline_parallel || (ubatch.embd && ubatch.embd_device > 0)) {
+             ggml_backend_sched_synchronize(sched.get());
+         }
+ 
+@@ -1357,6 +1361,31 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
+             return nullptr;
+         }
+ 
++        if (ubatch.embd && ubatch.embd_device > 0) {
++#if defined(GGML_USE_CUDA)
++            ggml_tensor * inp_embd = ggml_graph_get_tensor(gf, "inp_embd");
++            ggml_backend_t gpu_backend = nullptr;
++            for (const auto & backend : backends) {
++                if (ggml_backend_is_cuda(backend.get())) {
++                    gpu_backend = backend.get();
++                    break;
++                }
++            }
++            if (inp_embd == nullptr || gpu_backend == nullptr) {
++                LLAMA_LOG_ERROR("%s: cannot place device embedding input on a GPU backend\n", __func__);
++                ret = GGML_STATUS_FAILED;
++                return nullptr;
++            }
++            // Inputs otherwise default to the CPU backend. Pin before allocation so set_inputs()
++            // can perform a real same-device D2D instead of staging through host memory.
++            ggml_backend_sched_set_tensor_backend(sched.get(), inp_embd, gpu_backend);
++#else
++            LLAMA_LOG_ERROR("%s: device embedding supplied to a build without CUDA/HIP backend\n", __func__);
++            ret = GGML_STATUS_FAILED;
++            return nullptr;
++#endif
++        }
++
+         if (!ggml_backend_sched_alloc_graph(sched.get(), gf)) {
+             LLAMA_LOG_ERROR("%s: failed to allocate graph\n", __func__);
+             ret = GGML_STATUS_ALLOC_FAILED;
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index c8ecb0a2..bc92d6e4 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -13,6 +13,10 @@
+ #include "llama-memory-hybrid-iswa.h"
+ #include "llama-memory-recurrent.h"
+ 
++#if defined(GGML_USE_CUDA)
++#include "ggml-cuda.h"
++#endif
++
+ #include <cassert>
+ #include <cmath>
+ #include <cstring>
+@@ -74,8 +78,25 @@ void llm_graph_input_embd::set_input(const llama_ubatch * ubatch) {
+         GGML_ASSERT(n_embd == embd->ne[0]);
+ 
+         const int64_t n_tokens = ubatch->n_tokens;
+-
+-        ggml_backend_tensor_set(embd, ubatch->embd, 0, n_tokens*n_embd*ggml_element_size(embd));
++        const size_t nbytes = n_tokens*n_embd*ggml_element_size(embd);
++        if (ubatch->embd_device > 0) {
++#if defined(GGML_USE_CUDA)
++            const bool ok = ggml_backend_cuda_tensor_set_from_device_ptr(
++                embd, ubatch->embd, nbytes, ubatch->embd_device - 1, nullptr);
++            GGML_ASSERT(ok && "device embedding D2D into LLM input failed");
++            LLAMA_LOG_INFO(
++                "%s: HIP embedding D2D complete device=%d bytes=%zu source=%p inp_embd=%p\n",
++                __func__,
++                ubatch->embd_device - 1,
++                nbytes,
++                static_cast<const void *>(ubatch->embd),
++                embd->data);
++#else
++            GGML_ABORT("device embedding supplied to a build without CUDA/HIP backend");
++#endif
++        } else {
++            ggml_backend_tensor_set(embd, ubatch->embd, 0, nbytes);
++        }
+     }
+ }
+ 
+@@ -98,7 +119,18 @@ void llm_graph_input_embd_h::set_input(const llama_ubatch * ubatch) {
+         GGML_ASSERT(ubatch->embd);
+         GGML_ASSERT(n_embd == embd->ne[0]);
+ 
+-        ggml_backend_tensor_set(embd, ubatch->embd, 0, n_tokens*n_embd*ggml_element_size(h));
++        const size_t nbytes = n_tokens*n_embd*ggml_element_size(h);
++        if (ubatch->embd_device > 0) {
++#if defined(GGML_USE_CUDA)
++            const bool ok = ggml_backend_cuda_tensor_set_from_device_ptr(
++                embd, ubatch->embd, nbytes, ubatch->embd_device - 1, nullptr);
++            GGML_ASSERT(ok && "device embedding D2D into LLM embedding input failed");
++#else
++            GGML_ABORT("device embedding supplied to a build without CUDA/HIP backend");
++#endif
++        } else {
++            ggml_backend_tensor_set(embd, ubatch->embd, 0, nbytes);
++        }
+     }
+ 
+     // TODO: extend llama_ubatch to differentiate between token embeddings and hidden states
+@@ -106,8 +138,18 @@ void llm_graph_input_embd_h::set_input(const llama_ubatch * ubatch) {
+     //       ref: https://github.com/ggml-org/llama.cpp/pull/23643
+     if (ubatch->embd) {
+         GGML_ASSERT(n_embd == h->ne[0]);
+-
+-        ggml_backend_tensor_set(h, ubatch->embd, 0, n_tokens*n_embd*ggml_element_size(h));
++        const size_t nbytes = n_tokens*n_embd*ggml_element_size(h);
++        if (ubatch->embd_device > 0) {
++#if defined(GGML_USE_CUDA)
++            const bool ok = ggml_backend_cuda_tensor_set_from_device_ptr(
++                h, ubatch->embd, nbytes, ubatch->embd_device - 1, nullptr);
++            GGML_ASSERT(ok && "device embedding D2D into LLM hidden-state input failed");
++#else
++            GGML_ABORT("device embedding supplied to a build without CUDA/HIP backend");
++#endif
++        } else {
++            ggml_backend_tensor_set(h, ubatch->embd, 0, nbytes);
++        }
+     }
+ }
+ 
+diff --git a/src/llama-graph.h b/src/llama-graph.h
+index 7ed490ce..91687b9b 100644
+--- a/src/llama-graph.h
++++ b/src/llama-graph.h
+@@ -721,6 +721,7 @@ struct llm_graph_params {
+             ubatch.n_seq_tokens == other.ubatch.n_seq_tokens &&
+             ubatch.n_seqs       == other.ubatch.n_seqs &&
+             ubatch.n_seqs_unq   == other.ubatch.n_seqs_unq &&
++            (ubatch.embd_device > 0) == (other.ubatch.embd_device > 0) &&
+             (
+                 (!ubatch.token && !other.ubatch.token) ||
+                 (!ubatch.embd  && !other.ubatch.embd)  ||
+diff --git a/src/llama-kv-cache-dsv4.cpp b/src/llama-kv-cache-dsv4.cpp
+index 069da45f..0f300551 100644
+--- a/src/llama-kv-cache-dsv4.cpp
++++ b/src/llama-kv-cache-dsv4.cpp
+@@ -165,6 +165,7 @@ static llama_ubatch dsv4_build_raw_write_ubatch(const llama_ubatch & ubatch) {
+         /*.seq_idx      =*/ data->seq_idx.data(),
+         /*.output       =*/ data->output.data(),
+         /*.data         =*/ data,
++        /*.embd_device  =*/ 0,
+     };
+ 
+     return res;
+diff --git a/tools/mtmd/clip-impl.h b/tools/mtmd/clip-impl.h
+index 5b413681..50f49e50 100644
+--- a/tools/mtmd/clip-impl.h
++++ b/tools/mtmd/clip-impl.h
+@@ -524,6 +524,11 @@ struct clip_image_f32 {
+     void set_size(clip_image_size size, bool is_placeholder, bool is_audio) {
+         nx_ = size.width;
+         ny_ = size.height;
++        device_ptr_ = nullptr;
++        device_bytes_ = 0;
++        device_id_ = -1;
++        ready_event_ = nullptr;
++        device_owner_.reset();
+         if (is_placeholder) {
+             buf.clear();
+         } else {
+@@ -536,10 +541,43 @@ struct clip_image_f32 {
+     }
+ 
+     void cpy_buf(const std::vector<float> & new_buf) {
++        device_ptr_ = nullptr;
++        device_bytes_ = 0;
++        device_id_ = -1;
++        ready_event_ = nullptr;
++        device_owner_.reset();
+         buf = new_buf;
+     }
+ 
++    void set_device_view(
++            clip_image_size size,
++            const void * device_ptr,
++            size_t device_bytes,
++            int device_id,
++            void * ready_event,
++            std::shared_ptr<void> owner) {
++        nx_ = size.width;
++        ny_ = size.height;
++        buf.clear();
++        device_ptr_ = device_ptr;
++        device_bytes_ = device_bytes;
++        device_id_ = device_id;
++        ready_event_ = ready_event;
++        device_owner_ = std::move(owner);
++    }
++
++    bool is_device() const { return device_ptr_ != nullptr; }
++    const void * device_ptr() const { return device_ptr_; }
++    size_t device_bytes() const { return device_bytes_; }
++    int device_id() const { return device_id_; }
++    void * ready_event() const { return ready_event_; }
++
+     void from_u8(const clip_image_u8 & img) {
++        device_ptr_ = nullptr;
++        device_bytes_ = 0;
++        device_id_ = -1;
++        ready_event_ = nullptr;
++        device_owner_.reset();
+         auto size = img.get_size();
+         nx_ = size.width;
+         ny_ = size.height;
+@@ -562,6 +600,9 @@ struct clip_image_f32 {
+         if (is_placeholder()) {
+             return; // no-op
+         }
++        if (is_device()) {
++            throw std::runtime_error("device clip image must already be normalized");
++        }
+         for (size_t i = 0; i < n_pixels(); ++i) {
+             buf[i * 3 + 0] = (buf[i * 3 + 0] - mean[0]) / std[0];
+             buf[i * 3 + 1] = (buf[i * 3 + 1] - mean[1]) / std[1];
+@@ -573,17 +614,25 @@ struct clip_image_f32 {
+         if (is_placeholder()) {
+             throw std::runtime_error("this clip_image_f32 is a placeholder");
+         }
++        if (is_device()) {
++            throw std::runtime_error("device clip image has no host buffer");
++        }
+         return buf;
+     }
+ 
+     // note to contributors: NEVER add a get_rw_buf(), it is a DANGEROUS pattern
+ 
+     bool is_placeholder() const {
+-        return buf.empty();
++        return buf.empty() && !is_device();
+     }
+ 
+   private:
+     std::vector<float> buf;
++    const void * device_ptr_ = nullptr;
++    size_t device_bytes_ = 0;
++    int device_id_ = -1;
++    void * ready_event_ = nullptr;
++    std::shared_ptr<void> device_owner_;
+     int nx_ = 0;
+     int ny_ = 0;
+ 
+diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
+index b8866506..374f5ec7 100644
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -8,6 +8,9 @@
+ #include "ggml-cpp.h"
+ #include "ggml-alloc.h"
+ #include "ggml-backend.h"
++#if defined(GGML_USE_CUDA)
++#include "ggml-cuda.h"
++#endif
+ #include "gguf.h"
+ 
+ #include <algorithm>
+@@ -3558,10 +3561,19 @@ bool clip_image_encode(struct clip_ctx * ctx, int n_threads, const clip_image_f3
+     return clip_image_batch_encode(ctx, n_threads, &imgs, out_vec);
+ }
+ 
+-bool clip_image_batch_encode(clip_ctx * ctx, int n_threads, const clip_image_f32_batch * imgs_c_ptr, std::vector<float> & out_batch_embd) {
++bool clip_image_batch_encode(
++        clip_ctx * ctx,
++        int n_threads,
++        const clip_image_f32_batch * imgs_c_ptr,
++        std::vector<float> & out_batch_embd,
++        clip_device_embedding * out_device) {
+     const clip_image_f32_batch & imgs = *imgs_c_ptr;
+     int n_batch_cur = imgs.entries.size();
+ 
++    if (out_device != nullptr) {
++        *out_device = {};
++    }
++
+     // [QWEN_VIDEO] for video models, the batch dimension is used as temporal dimension for merged frames
+     if (!ctx->support_batch && n_batch_cur > clip_model_n_temporal_merge(ctx)) {
+         LOG_ERR("%s: batch size %d exceeds maximum supported batch/temporal-merge size %d\n", __func__, n_batch_cur, clip_model_n_temporal_merge(ctx));
+@@ -3576,6 +3588,20 @@ bool clip_image_batch_encode(clip_ctx * ctx, int n_threads, const clip_image_f32
+     // build the inference graph
+     ggml_backend_sched_reset(ctx->sched.get());
+     ggml_cgraph * gf = clip_get_graph_builder(ctx, imgs)->build();
++    const bool has_device_image = !imgs.is_audio && std::any_of(
++        imgs.entries.begin(),
++        imgs.entries.end(),
++        [](const clip_image_f32 & image) { return image.is_device(); });
++    if (has_device_image) {
++        ggml_tensor * inp_raw = ggml_graph_get_tensor(gf, "inp_raw");
++        if (inp_raw == nullptr || ctx->backend == nullptr || ctx->backend == ctx->backend_cpu) {
++            LOG_ERR("%s: cannot place device inp_raw on a GPU backend\n", __func__);
++            return false;
++        }
++        // Inputs default to the CPU backend. Pin this one before graph allocation so the
++        // producer's IPC allocation can be copied D2D directly into the graph input.
++        ggml_backend_sched_set_tensor_backend(ctx->sched.get(), inp_raw, ctx->backend);
++    }
+     ggml_backend_sched_alloc_graph(ctx->sched.get(), gf);
+ 
+     // set inputs
+@@ -3623,22 +3649,47 @@ bool clip_image_batch_encode(clip_ctx * ctx, int n_threads, const clip_image_f32
+         for (const auto & img : imgs.entries) {
+             nelem += img.nx() * img.ny() * 3;
+         }
+-        std::vector<float> inp_raw(nelem);
+-
+-        // layout of data (note: the channel dim is unrolled to better visualize the layout):
+-        //
+-        // ┌──W──┐
+-        // │     H │  channel = R
+-        // ├─────┤ │
+-        // │     H │  channel = G
+-        // ├─────┤ │
+-        // │     H │  channel = B
+-        // └─────┘ │
+-        //   ──────┘ x B
+-
+-        // IMPORTANT: [QWEN_VIDEO] the batch dim is currently used for temporal dim in Qwen-VL models
+-        // All entries must have the same spatial size (enforced by can_batch_with() during merging)
+-        {
++        if (has_device_image) {
++            if (n_batch_cur != 1 || !imgs.entries[0].is_device()) {
++                LOG_ERR("%s: device image path currently requires a single image batch\n", __func__);
++                return false;
++            }
++            ggml_tensor * inp_raw = get_inp_tensor("inp_raw");
++            const auto & image = imgs.entries[0];
++            if (image.device_bytes() != ggml_nbytes(inp_raw)) {
++                LOG_ERR(
++                    "%s: device image byte size %zu != inp_raw byte size %zu\n",
++                    __func__,
++                    image.device_bytes(),
++                    ggml_nbytes(inp_raw));
++                return false;
++            }
++#if defined(GGML_USE_CUDA)
++            if (!ggml_backend_cuda_tensor_set_from_device_ptr(
++                    inp_raw,
++                    image.device_ptr(),
++                    image.device_bytes(),
++                    image.device_id(),
++                    image.ready_event())) {
++                LOG_ERR("%s: GPU D2D copy into inp_raw failed\n", __func__);
++                return false;
++            }
++            LOG_INF(
++                "%s: HIP IPC v2 D2D complete device=%d bytes=%zu source=%p inp_raw=%p\n",
++                __func__,
++                image.device_id(),
++                image.device_bytes(),
++                image.device_ptr(),
++                inp_raw->data);
++#else
++            LOG_ERR("%s: device image supplied to a build without CUDA/HIP backend\n", __func__);
++            return false;
++#endif
++        } else {
++            std::vector<float> inp_raw(nelem);
++
++            // Layout is planar RGB: [R plane][G plane][B plane], repeated for batch/video.
++            // IMPORTANT: [QWEN_VIDEO] the batch dim is currently used as temporal dim.
+             const int nx = imgs.entries[0].nx();
+             const int ny = imgs.entries[0].ny();
+             const int n  = nx * ny;
+@@ -3657,8 +3708,8 @@ bool clip_image_batch_encode(clip_ctx * ctx, int n_threads, const clip_image_f32
+                     }
+                 }
+             }
++            set_input_f32("inp_raw", inp_raw);
+         }
+-        set_input_f32("inp_raw", inp_raw);
+ 
+     } else {
+         // audio input
+@@ -4493,15 +4544,40 @@ bool clip_image_batch_encode(clip_ctx * ctx, int n_threads, const clip_image_f32
+     LOG_DBG("%s: output embedding shape [%d, %d, %d]\n", __func__,
+         (int)embeddings->ne[0], (int)embeddings->ne[1], (int)embeddings->ne[2]);
+ 
+-    // copy output to user buffer if provided
+-    // if output is empty, skip the copy
++    if (out_device != nullptr) {
++#if defined(GGML_USE_CUDA)
++        const void * device_ptr = nullptr;
++        size_t device_bytes = 0;
++        int physical_device = -1;
++        if (!ggml_backend_cuda_tensor_get_device_ptr(
++                embeddings, &device_ptr, &device_bytes, &physical_device)) {
++            LOG_ERR("%s: output embedding is not a contiguous GPU tensor\n", __func__);
++            return false;
++        }
++        out_device->data = static_cast<const float *>(device_ptr);
++        out_device->nbytes = device_bytes;
++        out_device->physical_device = physical_device;
++        LOG_INF(
++            "%s: HIP device embedding ready device=%d bytes=%zu source=%p\n",
++            __func__,
++            physical_device,
++            device_bytes,
++            device_ptr);
++#else
++        LOG_ERR("%s: device embedding requested from a build without CUDA/HIP backend\n", __func__);
++        return false;
++#endif
++    }
++
++    // Copy output to a user host buffer only for the legacy host API. The strict device bridge
++    // leaves this vector empty and consumes out_device instead.
+     if (!out_batch_embd.empty()) {
+         if (out_batch_embd.size() != (size_t)ggml_nelements(embeddings)) {
+             LOG_ERR("%s: output buffer has %zu elements but expected %zu\n", __func__, out_batch_embd.size(), (size_t)ggml_nelements(embeddings));
+             GGML_ABORT("Output buffer size mismatch");
+         }
+         ggml_backend_tensor_get(embeddings, out_batch_embd.data(), 0, ggml_nbytes(embeddings));
+-    } else {
++    } else if (out_device == nullptr) {
+         LOG_WRN("%s: output buffer is empty, skipping copy\n", __func__);
+     }
+ 
+diff --git a/tools/mtmd/clip.h b/tools/mtmd/clip.h
+index 967093a8..99b47b33 100644
+--- a/tools/mtmd/clip.h
++++ b/tools/mtmd/clip.h
+@@ -80,9 +80,22 @@ int clip_n_output_tokens_y(const clip_ctx * ctx, const clip_image_f32 * img);
+ // this should be equal to the embedding dimension of the text model
+ int clip_n_mmproj_embd(const struct clip_ctx * ctx);
+ 
++// Borrowed, contiguous device output from the most recent encoder graph. The pointer remains
++// valid until the same clip context starts another encode or is destroyed.
++struct clip_device_embedding {
++    const float * data = nullptr;
++    size_t nbytes = 0;
++    int32_t physical_device = -1;
++};
++
+ // TODO: remove clip_image_encode() and always use batched version
+ bool clip_image_encode      (struct clip_ctx * ctx, int n_threads, const clip_image_f32 * img, std::vector<float> & out_vec);
+-bool clip_image_batch_encode(struct clip_ctx * ctx, int n_threads, const struct clip_image_f32_batch * imgs, std::vector<float> & out_batch_embd);
++bool clip_image_batch_encode(
++        struct clip_ctx * ctx,
++        int n_threads,
++        const struct clip_image_f32_batch * imgs,
++        std::vector<float> & out_batch_embd,
++        struct clip_device_embedding * out_device = nullptr);
+ 
+ bool clip_is_llava(const struct clip_ctx * ctx);
+ // note for contributor: this clip_is_(model) pattern is deprecated
+diff --git a/tools/mtmd/mtmd-helper.cpp b/tools/mtmd/mtmd-helper.cpp
+index 3c73db44..3da83d54 100644
+--- a/tools/mtmd/mtmd-helper.cpp
++++ b/tools/mtmd/mtmd-helper.cpp
+@@ -139,7 +139,13 @@ struct decode_embd_batch {
+     std::vector<llama_seq_id *> seq_ids;
+     std::vector<int8_t>         logits;
+     llama_batch batch;
+-    decode_embd_batch(float * embd, int32_t n_tokens, int n_pos_per_embd, int n_mmproj_embd) : n_pos_per_embd(n_pos_per_embd), n_mmproj_embd(n_mmproj_embd) {
++    decode_embd_batch(
++            float * embd,
++            int32_t n_tokens,
++            int n_pos_per_embd,
++            int n_mmproj_embd,
++            int32_t physical_device = -1)
++        : n_pos_per_embd(n_pos_per_embd), n_mmproj_embd(n_mmproj_embd) {
+         GGML_ASSERT(n_tokens > 0 && n_pos_per_embd > 0 && n_mmproj_embd > 0);
+         pos     .resize(n_tokens * n_pos_per_embd);
+         n_seq_id.resize(n_tokens);
+@@ -155,6 +161,7 @@ struct decode_embd_batch {
+             /*n_seq_id       =*/ n_seq_id.data(),
+             /*seq_id         =*/ seq_ids.data(),
+             /*logits         =*/ logits.data(),
++            /*embd_device    =*/ physical_device >= 0 ? physical_device + 1 : 0,
+         };
+     }
+ 
+@@ -226,24 +233,29 @@ struct decode_embd_batch {
+             // normal
+             pos_ptr = pos.data() + offset;
+         }
+-        return {
++        llama_batch view = {
+             /*n_tokens       =*/ n_tokens,
+             /*tokens         =*/ nullptr,
+-            /*embd           =*/ batch.embd     + offset * n_mmproj_embd,
++            /*embd           =*/ reinterpret_cast<float *>(
++                reinterpret_cast<uint8_t *>(batch.embd) +
++                (size_t) offset * n_mmproj_embd * sizeof(float)),
+             /*pos            =*/ pos_ptr,
+             /*n_seq_id       =*/ batch.n_seq_id + offset,
+             /*seq_id         =*/ batch.seq_id   + offset,
+             /*logits         =*/ batch.logits   + offset,
++            /*embd_device    =*/ batch.embd_device,
+         };
++        return view;
+     }
+ };
+ 
+ // Helper function for decoding an image whose embeddings have already been calculated
+-int32_t mtmd_helper_decode_image_chunk(
++static int32_t mtmd_helper_decode_image_chunk_impl(
+         mtmd_context * ctx,
+         struct llama_context * lctx,
+         const mtmd_input_chunk * chunk,
+         float * encoded_embd,
++        int32_t physical_device,
+         llama_pos n_past,
+         llama_seq_id seq_id,
+         int32_t n_batch,
+@@ -265,7 +277,8 @@ int32_t mtmd_helper_decode_image_chunk(
+     int32_t n_tokens = mtmd_input_chunk_get_n_tokens(chunk);
+     int32_t i_batch = 0;
+     int32_t n_img_batches = (n_tokens + n_batch - 1) / n_batch;
+-    decode_embd_batch batch_embd(encoded_embd, n_tokens, n_pos_per_embd, n_mmproj_embd);
++    decode_embd_batch batch_embd(
++        encoded_embd, n_tokens, n_pos_per_embd, n_mmproj_embd, physical_device);
+ 
+     if (mtmd_decode_use_mrope(ctx)) {
+         if (chunk_type == MTMD_INPUT_CHUNK_TYPE_IMAGE) {
+@@ -335,6 +348,62 @@ int32_t mtmd_helper_decode_image_chunk(
+     return 0;
+ }
+ 
++int32_t mtmd_helper_decode_image_chunk(
++        mtmd_context * ctx,
++        struct llama_context * lctx,
++        const mtmd_input_chunk * chunk,
++        float * encoded_embd,
++        llama_pos n_past,
++        llama_seq_id seq_id,
++        int32_t n_batch,
++        llama_pos * new_n_past,
++        mtmd_helper_post_decode_callback callback,
++        void * user_data) {
++    return mtmd_helper_decode_image_chunk_impl(
++        ctx, lctx, chunk, encoded_embd, -1, n_past, seq_id, n_batch,
++        new_n_past, callback, user_data);
++}
++
++int32_t mtmd_helper_decode_image_chunk_device(
++        mtmd_context * ctx,
++        struct llama_context * lctx,
++        const mtmd_input_chunk * chunk,
++        const float * encoded_embd,
++        size_t encoded_bytes,
++        int32_t physical_device,
++        llama_pos n_past,
++        llama_seq_id seq_id,
++        int32_t n_batch,
++        llama_pos * new_n_past,
++        mtmd_helper_post_decode_callback callback,
++        void * user_data) {
++    if (ctx == nullptr || chunk == nullptr || encoded_embd == nullptr || physical_device < 0) {
++        LOG_ERR("%s: invalid device embedding descriptor\n", __func__);
++        return -1;
++    }
++    const size_t n_tokens = mtmd_input_chunk_get_n_tokens(chunk);
++    const size_t n_embd = llama_model_n_embd_inp(llama_get_model(lctx));
++    if (n_tokens > SIZE_MAX / n_embd / sizeof(float) ||
++        encoded_bytes != n_tokens * n_embd * sizeof(float)) {
++        LOG_ERR(
++            "%s: device embedding byte size %zu does not match %zu tokens x %zu dims\n",
++            __func__, encoded_bytes, n_tokens, n_embd);
++        return -1;
++    }
++    return mtmd_helper_decode_image_chunk_impl(
++        ctx,
++        lctx,
++        chunk,
++        const_cast<float *>(encoded_embd),
++        physical_device,
++        n_past,
++        seq_id,
++        n_batch,
++        new_n_past,
++        callback,
++        user_data);
++}
++
+ int32_t mtmd_helper_eval_chunk_single(mtmd_context * ctx,
+         struct llama_context * lctx,
+         const mtmd_input_chunk * chunk,
+diff --git a/tools/mtmd/mtmd-helper.h b/tools/mtmd/mtmd-helper.h
+index 680a2317..0c01b749 100644
+--- a/tools/mtmd/mtmd-helper.h
++++ b/tools/mtmd/mtmd-helper.h
+@@ -107,6 +107,21 @@ MTMD_API int32_t mtmd_helper_decode_image_chunk(mtmd_context * ctx,
+                                                 mtmd_helper_post_decode_callback callback,
+                                                 void * user_data);
+ 
++// Strict GPU variant. encoded_embd is a device pointer on physical_device and encoded_bytes
++// must exactly match this chunk's packed input embedding size.
++MTMD_API int32_t mtmd_helper_decode_image_chunk_device(mtmd_context * ctx,
++                                                       struct llama_context * lctx,
++                                                       const mtmd_input_chunk * chunk,
++                                                       const float * encoded_embd,
++                                                       size_t encoded_bytes,
++                                                       int32_t physical_device,
++                                                       llama_pos n_past,
++                                                       llama_seq_id seq_id,
++                                                       int32_t n_batch,
++                                                       llama_pos * new_n_past,
++                                                       mtmd_helper_post_decode_callback callback,
++                                                       void * user_data);
++
+ //
+ // video input helpers (requires ffmpeg/ffprobe installed on the system)
+ // the notion of video only exists at the helper level, it is not visible to the core mtmd library
+diff --git a/tools/mtmd/mtmd.cpp b/tools/mtmd/mtmd.cpp
+index 6f145a41..da4644d4 100644
+--- a/tools/mtmd/mtmd.cpp
++++ b/tools/mtmd/mtmd.cpp
+@@ -63,6 +63,32 @@ struct mtmd_bitmap {
+         }
+     }
+ 
++    mtmd_bitmap(
++            const void * device_data,
++            size_t device_bytes,
++            int32_t device_id,
++            void * ready_event,
++            mtmd_device_buffer_release_callback release_callback,
++            void * release_user_data,
++            uint32_t nx,
++            uint32_t ny)
++        : nx(nx),
++          ny(ny),
++          is_audio(false),
++          preprocessed(true),
++          device_data(device_data),
++          device_bytes(device_bytes),
++          device_id(device_id),
++          ready_event(ready_event),
++          device_owner(
++              release_user_data,
++              [release_callback](void * owner) {
++                  if (release_callback != nullptr) {
++                      release_callback(owner);
++                  }
++              }) {
++    }
++
+     mtmd_bitmap(const unsigned char * data, uint32_t n_samples)
+         : nx(n_samples), ny(1), is_audio(true) {
+         if (data) {
+@@ -77,13 +103,19 @@ struct mtmd_bitmap {
+     }
+ 
+     bool is_placeholder() const {
+-        return data.empty();
++        return data.empty() && device_data == nullptr;
+     }
+ 
+     size_t n_bytes() const {
+-        return data.size();
++        return device_data != nullptr ? device_bytes : data.size();
+     }
+ 
++    bool is_device() const { return device_data != nullptr; }
++    const void * get_device_data() const { return device_data; }
++    int32_t get_device_id() const { return device_id; }
++    void * get_ready_event() const { return ready_event; }
++    const std::shared_ptr<void> & get_device_owner() const { return device_owner; }
++
+     bool can_merge_with(const mtmd_bitmap & other) const {
+         // [QWEN_VIDEO] can (temporal) merge if both are images with same size
+         return !is_audio && !other.is_audio && nx == other.nx && ny == other.ny;
+@@ -91,6 +123,11 @@ struct mtmd_bitmap {
+ 
+   private:
+     std::vector<unsigned char> data;
++    const void * device_data = nullptr;
++    size_t device_bytes = 0;
++    int32_t device_id = -1;
++    void * ready_event = nullptr;
++    std::shared_ptr<void> device_owner;
+ };
+ 
+ // position indexing for decoder model
+@@ -207,6 +244,16 @@ struct mtmd_input_chunk {
+         }
+         return false;
+     }
++
++    bool has_device_image() const {
++        if (type != MTMD_INPUT_CHUNK_TYPE_IMAGE || !tokens_image) {
++            return false;
++        }
++        return std::any_of(
++            tokens_image->batch_f32.entries.begin(),
++            tokens_image->batch_f32.entries.end(),
++            [](const clip_image_f32 & image) { return image.is_device(); });
++    }
+ };
+ 
+ struct mtmd_input_chunks {
+@@ -217,6 +264,8 @@ struct mtmd_batch {
+     mtmd_context * ctx;
+     std::vector<const mtmd_input_chunk *> entries;
+     std::vector<float> output_embd; // aggregated output embedding for the whole batch
++    clip_device_embedding output_device;
++    bool output_is_device = false;
+     mtmd_batch(mtmd_context * ctx): ctx(ctx) {}
+     int32_t n_tokens() const {
+         int32_t n = 0;
+@@ -1086,18 +1135,31 @@ struct mtmd_tokenizer {
+                 // resized+normalized interleaved f32 at the final resolution, so we
+                 // build the clip_image_f32 directly and skip the CPU preprocess.
+                 if (bmp->preprocessed) {
+-                    const auto & raw = bmp->get_ro_buf(); // bytes = nx*ny*3 floats
+                     const size_t n_floats = (size_t)bmp->nx * bmp->ny * 3;
+-                    if (raw.size() != n_floats * sizeof(float)) {
++                    if (bmp->n_bytes() != n_floats * sizeof(float)) {
+                         LOG_ERR("%s: preprocessed bitmap byte size %zu != expected %zu\n",
+-                                __func__, raw.size(), n_floats * sizeof(float));
++                                __func__, bmp->n_bytes(), n_floats * sizeof(float));
+                         return 2;
+                     }
+-                    std::vector<float> fbuf(n_floats);
+-                    std::memcpy(fbuf.data(), raw.data(), n_floats * sizeof(float));
+                     clip_image_f32 img_f32;
+-                    img_f32.set_size({(int)bmp->nx, (int)bmp->ny}, /*is_placeholder*/ false, /*is_audio*/ false);
+-                    img_f32.cpy_buf(fbuf);
++                    if (bmp->is_device()) {
++                        img_f32.set_device_view(
++                            {(int)bmp->nx, (int)bmp->ny},
++                            bmp->get_device_data(),
++                            bmp->n_bytes(),
++                            bmp->get_device_id(),
++                            bmp->get_ready_event(),
++                            bmp->get_device_owner());
++                    } else {
++                        const auto & raw = bmp->get_ro_buf(); // bytes = nx*ny*3 floats
++                        std::vector<float> fbuf(n_floats);
++                        std::memcpy(fbuf.data(), raw.data(), n_floats * sizeof(float));
++                        img_f32.set_size(
++                            {(int)bmp->nx, (int)bmp->ny},
++                            /*is_placeholder*/ false,
++                            /*is_audio*/ false);
++                        img_f32.cpy_buf(fbuf);
++                    }
+                     preproc_out.entries.emplace_back(std::move(img_f32));
+                     continue;
+                 }
+@@ -1591,6 +1653,12 @@ int32_t mtmd_batch_add_chunk(mtmd_batch * batch, const mtmd_input_chunk * chunk)
+         return 0;
+     }
+ 
++    // The strict IPC path currently accepts one device image per encoder graph. Keeping it
++    // unbatched also makes the borrowed output lifetime and pointer offset unambiguous.
++    if (chunk->has_device_image() || batch->entries[0]->has_device_image()) {
++        return 2;
++    }
++
+     if (!clip_support_batch(ctx)) {
+         // if no batching support, batch can only have one single chunk
+         return 2; // "batch too large" error code
+@@ -1655,11 +1723,45 @@ static int32_t mtmd_batch_encode_impl(mtmd_batch * batch) {
+ 
+     LOG_DBG("%s: encoding batch with %zu entries and total %zu tokens\n",
+             __func__, batch->entries.size(), mtmd_input_chunk_get_n_tokens(batch_chunk.get()));
+-    int32_t res = mtmd_encode_chunk_impl(
+-        batch->ctx,
+-        batch_chunk.get(),
+-        batch->output_embd);
+-    return res;
++    batch->output_embd.clear();
++    batch->output_device = {};
++    batch->output_is_device = false;
++
++    if (batch_chunk->has_device_image()) {
++        GGML_ASSERT(batch_chunk->tokens_image);
++        clip_ctx * ctx_clip = batch->ctx->ctx_v;
++        if (!ctx_clip) {
++            LOG_ERR("%s: model does not support vision input\n", __func__);
++            return 1;
++        }
++        bool ok = clip_image_batch_encode(
++            ctx_clip,
++            batch->ctx->n_threads,
++            &batch_chunk->tokens_image->batch_f32,
++            batch->output_embd,
++            &batch->output_device);
++        if (!ok) {
++            return 1;
++        }
++        const size_t expected = static_cast<size_t>(batch->n_tokens()) *
++            static_cast<size_t>(batch->ctx->n_embd_out()) * sizeof(float);
++        if (batch->output_device.data == nullptr ||
++            batch->output_device.nbytes != expected ||
++            batch->output_device.physical_device < 0) {
++            LOG_ERR(
++                "%s: invalid GPU embedding output pointer=%p bytes=%zu expected=%zu device=%d\n",
++                __func__,
++                static_cast<const void *>(batch->output_device.data),
++                batch->output_device.nbytes,
++                expected,
++                batch->output_device.physical_device);
++            return 1;
++        }
++        batch->output_is_device = true;
++        return 0;
++    }
++
++    return mtmd_encode_chunk_impl(batch->ctx, batch_chunk.get(), batch->output_embd);
+ }
+ 
+ int32_t mtmd_batch_encode(mtmd_batch * batch) {
+@@ -1672,6 +1774,10 @@ int32_t mtmd_batch_encode(mtmd_batch * batch) {
+ }
+ 
+ float * mtmd_batch_get_output_embd(mtmd_batch * batch, const mtmd_input_chunk * chunk) {
++    if (batch->output_is_device) {
++        LOG_ERR("%s: batch output is device-resident; use mtmd_batch_get_output_embd_device\n", __func__);
++        return nullptr;
++    }
+     if (batch->output_embd.empty()) {
+         LOG_ERR("%s: batch has not been encoded yet\n", __func__);
+         return nullptr;
+@@ -1691,6 +1797,40 @@ float * mtmd_batch_get_output_embd(mtmd_batch * batch, const mtmd_input_chunk *
+     return nullptr; // not found
+ }
+ 
++bool mtmd_batch_get_output_embd_device(
++        mtmd_batch * batch,
++        const mtmd_input_chunk * chunk,
++        mtmd_device_embeddings * output) {
++    if (output == nullptr) {
++        return false;
++    }
++    *output = {};
++    if (!batch->output_is_device || batch->output_device.data == nullptr) {
++        return false;
++    }
++
++    size_t offset_floats = 0;
++    const size_t n_embd = batch->ctx->n_embd_out();
++    const size_t total_floats = batch->output_device.nbytes / sizeof(float);
++    for (const auto * entry : batch->entries) {
++        const size_t entry_floats = mtmd_input_chunk_get_n_tokens(entry) * n_embd;
++        if (entry == chunk) {
++            if (offset_floats > total_floats || entry_floats > total_floats - offset_floats) {
++                LOG_ERR("%s: device embedding offset exceeds output tensor\n", __func__);
++                return false;
++            }
++            output->data = reinterpret_cast<const float *>(
++                reinterpret_cast<const uint8_t *>(batch->output_device.data) +
++                offset_floats * sizeof(float));
++            output->nbytes = entry_floats * sizeof(float);
++            output->physical_device = batch->output_device.physical_device;
++            return true;
++        }
++        offset_floats += entry_floats;
++    }
++    return false;
++}
++
+ bool mtmd_decode_use_non_causal(const mtmd_context * ctx, const mtmd_input_chunk * chunk) {
+     auto proj_type = ctx->proj_type_v();
+     if (chunk && chunk->type == MTMD_INPUT_CHUNK_TYPE_AUDIO) {
+@@ -1752,6 +1892,35 @@ mtmd_bitmap * mtmd_bitmap_init_preprocessed(uint32_t nx,
+     return bitmap;
+ }
+ 
++mtmd_bitmap * mtmd_bitmap_init_preprocessed_device(
++        uint32_t nx,
++        uint32_t ny,
++        const void * device_data,
++        size_t device_bytes,
++        int32_t device_id,
++        void * ready_event,
++        mtmd_device_buffer_release_callback release_callback,
++        void * release_user_data) {
++    if (nx == 0 || ny == 0 ||
++        static_cast<size_t>(nx) > SIZE_MAX / static_cast<size_t>(ny) / 3 / sizeof(float)) {
++        return nullptr;
++    }
++    const size_t expected = static_cast<size_t>(nx) * ny * 3 * sizeof(float);
++    if (device_data == nullptr || device_bytes != expected ||
++        device_id < 0 || release_callback == nullptr || release_user_data == nullptr) {
++        return nullptr;
++    }
++    return new mtmd_bitmap(
++        device_data,
++        device_bytes,
++        device_id,
++        ready_event,
++        release_callback,
++        release_user_data,
++        nx,
++        ny);
++}
++
+ mtmd_bitmap * mtmd_bitmap_init_from_audio(size_t n_samples,
+                                           const float * data) {
+     mtmd_bitmap * bitmap = new mtmd_bitmap((const unsigned char *)data, n_samples);
+@@ -1771,7 +1940,7 @@ uint32_t mtmd_bitmap_get_ny(const mtmd_bitmap * bitmap) {
+ }
+ 
+ const unsigned char * mtmd_bitmap_get_data(const mtmd_bitmap * bitmap) {
+-    if (bitmap->is_placeholder()) {
++    if (bitmap->is_placeholder() || bitmap->is_device()) {
+         return nullptr;
+     }
+     return bitmap->get_ro_buf().data();
+@@ -1781,7 +1950,7 @@ size_t mtmd_bitmap_get_n_bytes(const mtmd_bitmap * bitmap) {
+     if (bitmap->is_placeholder()) {
+         return 0;
+     }
+-    return bitmap->get_ro_buf().size();
++    return bitmap->n_bytes();
+ }
+ 
+ bool mtmd_bitmap_is_audio(const mtmd_bitmap * bitmap) {
+diff --git a/tools/mtmd/mtmd.h b/tools/mtmd/mtmd.h
+index 93270269..6db67bdf 100644
+--- a/tools/mtmd/mtmd.h
++++ b/tools/mtmd/mtmd.h
+@@ -65,6 +65,14 @@ struct mtmd_input_chunk;
+ struct mtmd_input_chunks;
+ struct mtmd_batch;
+ 
++// Borrowed device embeddings produced by the most recent mtmd batch encode. `data` remains
++// owned by mtmd and is valid until the same context starts another encode or is destroyed.
++struct mtmd_device_embeddings {
++    const float * data;
++    size_t nbytes;
++    int32_t physical_device;
++};
++
+ struct mtmd_input_text {
+     const char * text;
+     size_t text_len;
+@@ -168,6 +176,19 @@ MTMD_API mtmd_bitmap *         mtmd_bitmap_init_from_audio(size_t n_samples,
+ // f32 pixels (nx*ny*3 floats) at the model's final input resolution; mtmd_tokenize
+ // then skips the CPU resize/normalize preprocess for this image.
+ MTMD_API mtmd_bitmap *         mtmd_bitmap_init_preprocessed(uint32_t nx, uint32_t ny, const float * data);
++// Build a bitmap over already-preprocessed planar RGB F32 device memory. The image data is
++// never dereferenced on the CPU. `ready_event` is an optional backend-native event and
++// `release_callback(release_user_data)` runs after the last token/image clone is destroyed.
++typedef void (*mtmd_device_buffer_release_callback)(void * release_user_data);
++MTMD_API mtmd_bitmap *         mtmd_bitmap_init_preprocessed_device(
++        uint32_t nx,
++        uint32_t ny,
++        const void * device_data,
++        size_t device_bytes,
++        int32_t device_id,
++        void * ready_event,
++        mtmd_device_buffer_release_callback release_callback,
++        void * release_user_data);
+ MTMD_API uint32_t              mtmd_bitmap_get_nx     (const mtmd_bitmap * bitmap);
+ MTMD_API uint32_t              mtmd_bitmap_get_ny     (const mtmd_bitmap * bitmap);
+ MTMD_API const unsigned char * mtmd_bitmap_get_data   (const mtmd_bitmap * bitmap);
+@@ -317,6 +338,11 @@ MTMD_API int32_t mtmd_batch_add_chunk(mtmd_batch * batch, const mtmd_input_chunk
+ // returns 1 on generic error
+ MTMD_API int32_t mtmd_batch_encode(mtmd_batch * batch);
+ MTMD_API float * mtmd_batch_get_output_embd(mtmd_batch * batch, const mtmd_input_chunk * chunk);
++// Returns true only when this batch was encoded through the strict GPU output path.
++MTMD_API bool mtmd_batch_get_output_embd_device(
++        mtmd_batch * batch,
++        const mtmd_input_chunk * chunk,
++        struct mtmd_device_embeddings * output);
+ 
+ 
+ // Set callback for all future logging events.
+diff --git a/tools/server/server-common.cpp b/tools/server/server-common.cpp
+index bbb1714c..268bbaaa 100644
+--- a/tools/server/server-common.cpp
++++ b/tools/server/server-common.cpp
+@@ -10,10 +10,13 @@
+ #include "server-common.h"
+ #include "server-ipc.h"
+ 
++#include <algorithm>
+ #include <random>
+ #include <sstream>
+ #include <fstream>
+ #include <limits>
++#include <cmath>
++#include <cctype>
+ 
+ json format_error_response(const std::string & message, const enum error_type type) {
+     std::string type_str;
+@@ -756,34 +759,146 @@ static server_tokens tokenize_input_subprompt(const llama_vocab * vocab, mtmd_co
+             if (!has_mtmd)
+                 throw std::runtime_error("Multimodal data provided, but model does not support multimodal requests.");
+ 
+-            // JSON object with prompt and multimodal key. Each entry is either a
+-            // base64-encoded image/audio string, or an object describing pixels
+-            // shared from the GPU via a HIP IPC handle (zero-copy path):
+-            //   { "ipc_handle": "<base64 hipIpcMemHandle_t>", "width": W, "height": H,
+-            //     "preprocessed": <bool> }
+-            // preprocessed=false: raw uint8 RGB at original size (server does CPU preprocess);
+-            // preprocessed=true : already resized+normalized interleaved f32 at final size
+-            //                     (server skips preprocess, feeds it straight to the encoder).
++            // Each entry is a base64 image/audio string or a strict GPU IPC v2 descriptor.
++            // The v2 path accepts only final planar RGB F32 data and never maps pixels on CPU.
+             mtmd::bitmaps bitmaps;
+             for (const auto & entry : json_prompt.at(JSON_MTMD_DATA_KEY)) {
+-                if (entry.is_object() && entry.contains("ipc_handle")) {
++                if (entry.is_object() && entry.contains("protocol")) {
++                    if (entry.at("protocol").get<std::string>() != "vlm-hip-ipc-v2") {
++                        throw std::runtime_error("unsupported GPU image IPC protocol");
++                    }
+                     const uint32_t nx = entry.at("width").get<uint32_t>();
+                     const uint32_t ny = entry.at("height").get<uint32_t>();
+-                    const bool preprocessed = json_value(entry, "preprocessed", false);
+-                    raw_buffer handle = base64_decode(entry.at("ipc_handle").get<std::string>());
+-                    const size_t elem = preprocessed ? sizeof(float) : 1;
+-                    const size_t nbytes = (size_t) nx * ny * 3 * elem;
+-                    raw_buffer buf;
++                    const uint32_t source_width = entry.at("source_width").get<uint32_t>();
++                    const uint32_t source_height = entry.at("source_height").get<uint32_t>();
++                    const uint64_t request_id = entry.at("request_id").get<uint64_t>();
++                    const uint32_t channels = entry.at("channels").get<uint32_t>();
++                    const int device_id = entry.at("device_id").get<int>();
++                    const size_t allocation_bytes = entry.at("allocation_bytes").get<size_t>();
++                    const int patch_size = entry.at("patch_size").get<int>();
++                    const int merge_size = entry.at("merge_size").get<int>();
++                    const int image_max_tokens = entry.at("image_max_tokens").get<int>();
++                    const std::string dtype = entry.at("dtype").get<std::string>();
++                    const std::string layout = entry.at("layout").get<std::string>();
++                    const std::string normalization = entry.at("normalization").get<std::string>();
++                    const std::string resize_mode = entry.at("resize_mode").get<std::string>();
++                    const std::string model_sha256 = entry.at("model_sha256").get<std::string>();
++                    const std::string mmproj_sha256 = entry.at("mmproj_sha256").get<std::string>();
++                    const std::string device_uuid = entry.at("device_uuid").get<std::string>();
++                    const std::string fingerprint = entry.at("preprocess_fingerprint").get<std::string>();
++                    if (!entry.at("preprocessed").get<bool>() || channels != 3 ||
++                        !entry.at("align_corners").get<bool>() ||
++                        dtype != "float32" || layout != "CHW" || device_id != 0 ||
++                        patch_size != 16 || merge_size != 2 || image_max_tokens != 512 ||
++                        normalization != "qwen3-vl-mean-0.5-std-0.5" ||
++                        resize_mode != "smart_resize-pad_ceil-bilinear-align_corners" ||
++                        model_sha256 !=
++                            "cb8616bf6ed228982d9e47d7b72b42195342efa26044b0ee1873e61d9e78d3d7" ||
++                        mmproj_sha256 !=
++                            "d406d03ebabefdef86a2c86bf0c1b65f9e046f7a81c218f25de4931b46a07fc4" ||
++                        source_width == 0 || source_height == 0 || source_width > 16384 ||
++                        source_height > 16384 || request_id == 0 || device_uuid.empty()) {
++                        throw std::runtime_error("GPU image IPC v2 preprocess contract mismatch");
++                    }
++                    std::string actual_device_uuid;
++                    std::string uuid_error;
++                    if (!server_ipc_device_uuid(device_id, actual_device_uuid, uuid_error)) {
++                        throw std::runtime_error("GPU image IPC v2 device query failed: " + uuid_error);
++                    }
++                    if (device_uuid != actual_device_uuid) {
++                        throw std::runtime_error("GPU image IPC v2 physical-device UUID mismatch");
++                    }
++                    const bool fingerprint_ok = fingerprint.size() == 71 &&
++                        fingerprint.compare(0, 7, "sha256:") == 0 &&
++                        std::all_of(
++                            fingerprint.begin() + 7,
++                            fingerprint.end(),
++                            [](unsigned char c) { return std::isxdigit(c) != 0; });
++                    if (!fingerprint_ok) {
++                        throw std::runtime_error("invalid GPU image preprocess fingerprint");
++                    }
++
++                    constexpr int align = 16 * 2;
++                    constexpr int min_pixels = 8 * align * align;
++                    constexpr int max_pixels = 512 * align * align;
++                    auto round_factor = [=](float value) {
++                        return static_cast<int>(std::round(value / align)) * align;
++                    };
++                    auto ceil_factor = [=](float value) {
++                        return static_cast<int>(std::ceil(value / align)) * align;
++                    };
++                    auto floor_factor = [=](float value) {
++                        return static_cast<int>(std::floor(value / align)) * align;
++                    };
++                    int expected_height = std::max(align, round_factor(source_height));
++                    int expected_width = std::max(align, round_factor(source_width));
++                    if (static_cast<int64_t>(expected_height) * expected_width > max_pixels) {
++                        const float beta = std::sqrt(
++                            static_cast<float>(source_height) * source_width / max_pixels);
++                        expected_height = std::max(align, floor_factor(source_height / beta));
++                        expected_width = std::max(align, floor_factor(source_width / beta));
++                    } else if (static_cast<int64_t>(expected_height) * expected_width < min_pixels) {
++                        const float beta = std::sqrt(
++                            static_cast<float>(min_pixels) /
++                            (static_cast<float>(source_height) * source_width));
++                        expected_height = ceil_factor(source_height * beta);
++                        expected_width = ceil_factor(source_width * beta);
++                    }
++                    if (nx != static_cast<uint32_t>(expected_width) ||
++                        ny != static_cast<uint32_t>(expected_height)) {
++                        throw std::runtime_error("GPU image IPC v2 smart_resize dimensions mismatch");
++                    }
++                    const uint64_t expected_bytes =
++                        static_cast<uint64_t>(nx) * ny * channels * sizeof(float);
++                    if (expected_bytes != allocation_bytes || expected_bytes > 64ULL * 1024 * 1024) {
++                        throw std::runtime_error("GPU image IPC v2 allocation size mismatch");
++                    }
++
++                    raw_buffer memory_handle = base64_decode(
++                        entry.at("memory_handle").get<std::string>());
++                    raw_buffer event_handle = base64_decode(
++                        entry.at("ready_event_handle").get<std::string>());
++                    std::shared_ptr<server_ipc_mapping> mapping;
+                     std::string err;
+-                    if (!server_ipc_copy_rgb(handle.data(), handle.size(), nbytes, buf, err)) {
+-                        throw std::runtime_error("raw GPU image input failed: " + err);
++                    if (!server_ipc_open_rgb(
++                            memory_handle.data(),
++                            memory_handle.size(),
++                            event_handle.data(),
++                            event_handle.size(),
++                            allocation_bytes,
++                            device_id,
++                            mapping,
++                            err)) {
++                        throw std::runtime_error("GPU image IPC v2 open failed: " + err);
+                     }
+-                    if (preprocessed) {
+-                        bitmaps.entries.emplace_back(
+-                            mtmd_bitmap_init_preprocessed(nx, ny, reinterpret_cast<const float *>(buf.data())));
+-                    } else {
+-                        bitmaps.entries.emplace_back(mtmd::bitmap(nx, ny, buf.data()).ptr.release());
++                    auto * owner = new std::shared_ptr<server_ipc_mapping>(mapping);
++                    mtmd_bitmap * bitmap = mtmd_bitmap_init_preprocessed_device(
++                        nx,
++                        ny,
++                        mapping->device_data(),
++                        mapping->size(),
++                        mapping->device_id(),
++                        mapping->ready_event(),
++                        server_ipc_release_mapping,
++                        owner);
++                    if (bitmap == nullptr) {
++                        delete owner;
++                        throw std::runtime_error("GPU image IPC v2 bitmap construction failed");
+                     }
++                    const std::string bitmap_id =
++                        "hip-ipc-v2:" + std::to_string(request_id) + ":" + fingerprint;
++                    mtmd_bitmap_set_id(bitmap, bitmap_id.c_str());
++                    bitmaps.entries.emplace_back(bitmap);
++                    LOG_INF(
++                        "HIP IPC v2 mapped request=%" PRIu64 " device=%d bytes=%zu shape=%ux%u\n",
++                        request_id,
++                        device_id,
++                        allocation_bytes,
++                        nx,
++                        ny);
++                } else if (entry.is_object() && entry.contains("ipc_handle")) {
++                    throw std::runtime_error(
++                        "legacy GPU image IPC v1 is disabled; use vlm-hip-ipc-v2");
+                 } else {
+                     raw_buffer buf = base64_decode(entry.get<std::string>());
+                     auto out = mtmd_helper_bitmap_init_from_buf(mctx, buf.data(), buf.size(), false);
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index 744593c7..4f9d2742 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -152,6 +152,7 @@ struct server_batch {
+             batch.n_seq_id + off,
+             batch.seq_id   + off,
+             batch.logits   + off,
++            0,
+         };
+ 
+         return view;
+@@ -699,8 +700,13 @@ struct server_slot {
+ 
+         auto try_decode = [&]() -> int32_t {
+             if (mbatch) {
+-                float * embd = mtmd_batch_get_output_embd(mbatch.get(), chunk.get());
+-                if (embd) {
++                mtmd_device_embeddings device_embd = {};
++                const bool has_device_embd = mtmd_batch_get_output_embd_device(
++                    mbatch.get(), chunk.get(), &device_embd);
++                float * host_embd = has_device_embd
++                    ? nullptr
++                    : mtmd_batch_get_output_embd(mbatch.get(), chunk.get());
++                if (has_device_embd || host_embd) {
+                     void * cb_data = spec;
+                     static auto cb = [](llama_batch batch, void * user_data) {
+                         common_speculative * spec = static_cast<common_speculative *>(user_data);
+@@ -711,18 +717,35 @@ struct server_slot {
+                     };
+ 
+                     llama_pos new_n_past; // unused for now
+-                    res = mtmd_helper_decode_image_chunk(
+-                        mctx,
+-                        ctx_tgt,
+-                        chunk.get(),
+-                        embd,
+-                        prompt.tokens.pos_next(),
+-                        id,
+-                        llama_n_batch(ctx_tgt),
+-                        &new_n_past,
+-                        cb,
+-                        cb_data
+-                    );
++                    if (has_device_embd) {
++                        res = mtmd_helper_decode_image_chunk_device(
++                            mctx,
++                            ctx_tgt,
++                            chunk.get(),
++                            device_embd.data,
++                            device_embd.nbytes,
++                            device_embd.physical_device,
++                            prompt.tokens.pos_next(),
++                            id,
++                            llama_n_batch(ctx_tgt),
++                            &new_n_past,
++                            cb,
++                            cb_data
++                        );
++                    } else {
++                        res = mtmd_helper_decode_image_chunk(
++                            mctx,
++                            ctx_tgt,
++                            chunk.get(),
++                            host_embd,
++                            prompt.tokens.pos_next(),
++                            id,
++                            llama_n_batch(ctx_tgt),
++                            &new_n_past,
++                            cb,
++                            cb_data
++                        );
++                    }
+                     if (res != 0) {
+                         SLT_ERR(*this, "failed to decode mtmd chunk, idx = %zu, res = %d\n", idx, res);
+                         return -1;
+diff --git a/tools/server/server-ipc.cpp b/tools/server/server-ipc.cpp
+index 6d87c201..8d11b60f 100644
+--- a/tools/server/server-ipc.cpp
++++ b/tools/server/server-ipc.cpp
+@@ -1,49 +1,120 @@
+ #include "server-ipc.h"
+ 
+ #include <cstring>
++#include <iomanip>
++#include <limits>
++#include <memory>
++#include <sstream>
+ #include <string>
+ 
+ #if defined(GGML_USE_HIP) || defined(__HIP_PLATFORM_AMD__)
+ #include <hip/hip_runtime.h>
+ 
+-bool server_ipc_copy_rgb(const uint8_t * handle_bytes, size_t handle_len,
+-                         size_t nbytes, std::vector<uint8_t> & out,
+-                         std::string & err) {
+-    if (handle_len != sizeof(hipIpcMemHandle_t)) {
+-        err = "ipc_handle wrong size: got " + std::to_string(handle_len) +
+-              ", expected " + std::to_string(sizeof(hipIpcMemHandle_t));
++server_ipc_mapping::~server_ipc_mapping() {
++    if (ready_event_ != nullptr) {
++        (void) hipEventDestroy(static_cast<hipEvent_t>(ready_event_));
++        ready_event_ = nullptr;
++    }
++    if (device_ptr_ != nullptr) {
++        (void) hipIpcCloseMemHandle(device_ptr_);
++        device_ptr_ = nullptr;
++    }
++}
++
++bool server_ipc_device_uuid(int device_id, std::string & out, std::string & err) {
++    hipUUID uuid{};
++    const hipError_t status = hipDeviceGetUuid(&uuid, device_id);
++    if (status != hipSuccess) {
++        err = std::string("hipDeviceGetUuid: ") + hipGetErrorString(status);
+         return false;
+     }
+-    hipIpcMemHandle_t h;
+-    std::memcpy(&h, handle_bytes, sizeof(h));
++    std::ostringstream stream;
++    stream << std::hex << std::setfill('0');
++    for (const char byte : uuid.bytes) {
++        stream << std::setw(2) << static_cast<unsigned int>(static_cast<unsigned char>(byte));
++    }
++    out = stream.str();
++    return true;
++}
+ 
+-    void * dptr = nullptr;
+-    hipError_t e = hipIpcOpenMemHandle(&dptr, h, hipIpcMemLazyEnablePeerAccess);
+-    if (e != hipSuccess) {
+-        err = std::string("hipIpcOpenMemHandle: ") + hipGetErrorString(e);
++bool server_ipc_open_rgb(
++        const uint8_t * memory_handle_bytes,
++        size_t memory_handle_len,
++        const uint8_t * event_handle_bytes,
++        size_t event_handle_len,
++        size_t nbytes,
++        int device_id,
++        std::shared_ptr<server_ipc_mapping> & out,
++        std::string & err) {
++    if (memory_handle_len != sizeof(hipIpcMemHandle_t)) {
++        err = "memory_handle wrong size: got " + std::to_string(memory_handle_len) +
++              ", expected " + std::to_string(sizeof(hipIpcMemHandle_t));
++        return false;
++    }
++    if (event_handle_len != sizeof(hipIpcEventHandle_t)) {
++        err = "ready_event_handle wrong size: got " + std::to_string(event_handle_len) +
++              ", expected " + std::to_string(sizeof(hipIpcEventHandle_t));
++        return false;
++    }
++    if (nbytes == 0 || nbytes > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
++        err = "allocation_bytes is zero or exceeds the v2 safety limit";
++        return false;
++    }
++    int device_count = 0;
++    hipError_t status = hipGetDeviceCount(&device_count);
++    if (status != hipSuccess || device_id < 0 || device_id >= device_count) {
++        err = "invalid HIP device " + std::to_string(device_id);
+         return false;
+     }
++    status = hipSetDevice(device_id);
++    if (status != hipSuccess) {
++        err = std::string("hipSetDevice: ") + hipGetErrorString(status);
++        return false;
++    }
++
++    hipIpcMemHandle_t memory_handle;
++    hipIpcEventHandle_t event_handle;
++    std::memcpy(&memory_handle, memory_handle_bytes, sizeof(memory_handle));
++    std::memcpy(&event_handle, event_handle_bytes, sizeof(event_handle));
+ 
+-    out.resize(nbytes);
+-    e = hipMemcpy(out.data(), dptr, nbytes, hipMemcpyDeviceToHost);
+-    hipError_t ce = hipIpcCloseMemHandle(dptr);
+-    if (e != hipSuccess) {
+-        err = std::string("hipMemcpy D2H: ") + hipGetErrorString(e);
++    auto mapping = std::make_shared<server_ipc_mapping>();
++    status = hipIpcOpenMemHandle(
++        &mapping->device_ptr_, memory_handle, hipIpcMemLazyEnablePeerAccess);
++    if (status != hipSuccess) {
++        err = std::string("hipIpcOpenMemHandle: ") + hipGetErrorString(status);
+         return false;
+     }
+-    if (ce != hipSuccess) {
+-        err = std::string("hipIpcCloseMemHandle: ") + hipGetErrorString(ce);
++    hipEvent_t ready_event = nullptr;
++    status = hipIpcOpenEventHandle(&ready_event, event_handle);
++    if (status != hipSuccess) {
++        err = std::string("hipIpcOpenEventHandle: ") + hipGetErrorString(status);
+         return false;
+     }
++    mapping->ready_event_ = ready_event;
++    mapping->size_ = nbytes;
++    mapping->device_id_ = device_id;
++    out = std::move(mapping);
+     return true;
+ }
+ 
+ #else  // no HIP at build time
+ 
+-bool server_ipc_copy_rgb(const uint8_t *, size_t, size_t,
+-                         std::vector<uint8_t> &, std::string & err) {
+-    err = "server built without HIP; raw GPU (ipc_handle) image input unavailable";
++server_ipc_mapping::~server_ipc_mapping() = default;
++
++bool server_ipc_device_uuid(int, std::string &, std::string & err) {
++    err = "server built without HIP; device UUID unavailable";
++    return false;
++}
++
++bool server_ipc_open_rgb(
++        const uint8_t *, size_t, const uint8_t *, size_t, size_t, int,
++        std::shared_ptr<server_ipc_mapping> &, std::string & err) {
++    err = "server built without HIP; GPU IPC v2 image input unavailable";
+     return false;
+ }
+ 
+ #endif
++
++void server_ipc_release_mapping(void * owner) {
++    delete static_cast<std::shared_ptr<server_ipc_mapping> *>(owner);
++}
+diff --git a/tools/server/server-ipc.h b/tools/server/server-ipc.h
+index f4fb1de0..bfd46f85 100644
+--- a/tools/server/server-ipc.h
++++ b/tools/server/server-ipc.h
+@@ -1,19 +1,51 @@
+ #pragma once
+ 
+-// Cross-process GPU shared-memory helper for zero-copy VLM image input.
+-// A producer process (the vision pipeline) allocates an RGB buffer on the GPU
+-// and exports a HIP IPC handle; the server maps that same VRAM here and copies
+-// the pixels to a host buffer for the (currently CPU) clip preprocess — no JPEG
+-// encode/decode and no data over HTTP.
++// Cross-process GPU shared-memory helper for VLM image input. This API only opens
++// the producer's HIP allocation and ready event; it never copies pixels to host.
+ 
+ #include <cstddef>
+ #include <cstdint>
++#include <memory>
+ #include <string>
+-#include <vector>
+-
+-// Open the HIP IPC handle (raw 64-byte hipIpcMemHandle_t), copy `nbytes` from the
+-// shared device allocation into `out` (resized to nbytes), then close the handle.
+-// Returns false and sets `err` on any failure (including builds without HIP).
+-bool server_ipc_copy_rgb(const uint8_t * handle_bytes, size_t handle_len,
+-                         size_t nbytes, std::vector<uint8_t> & out,
+-                         std::string & err);
++
++class server_ipc_mapping {
++public:
++    server_ipc_mapping() = default;
++    ~server_ipc_mapping();
++
++    server_ipc_mapping(const server_ipc_mapping &) = delete;
++    server_ipc_mapping & operator=(const server_ipc_mapping &) = delete;
++
++    const void * device_data() const { return device_ptr_; }
++    void * ready_event() const { return ready_event_; }
++    size_t size() const { return size_; }
++    int device_id() const { return device_id_; }
++
++private:
++    friend bool server_ipc_open_rgb(
++        const uint8_t *, size_t, const uint8_t *, size_t, size_t, int,
++        std::shared_ptr<server_ipc_mapping> &, std::string &);
++
++    void * device_ptr_ = nullptr;
++    void * ready_event_ = nullptr;
++    size_t size_ = 0;
++    int device_id_ = -1;
++};
++
++// Opens a 64-byte hipIpcMemHandle_t and a 64-byte hipIpcEventHandle_t on the
++// requested device. Ownership remains in `out` until mtmd finishes encoding.
++bool server_ipc_open_rgb(
++    const uint8_t * memory_handle_bytes,
++    size_t memory_handle_len,
++    const uint8_t * event_handle_bytes,
++    size_t event_handle_len,
++    size_t nbytes,
++    int device_id,
++    std::shared_ptr<server_ipc_mapping> & out,
++    std::string & err);
++
++// Canonical lowercase 16-byte HIP UUID for cross-process physical-device checks.
++bool server_ipc_device_uuid(int device_id, std::string & out, std::string & err);
++
++// Callback passed through the mtmd C API. `owner` is a heap-allocated shared_ptr.
++void server_ipc_release_mapping(void * owner);

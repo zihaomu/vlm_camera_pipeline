@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-09T19:46:04+08:00",
+  "status": "passed",
+  "scope": "persistent across reboot for the exact running kernel",
+  "kernel_release": "6.17.0-1032-oem",
+  "kernel_upgrade_policy": "fail closed after a kernel change until the locked patch is rebuilt and installed for that kernel",
+  "installation": {
+    "source_module": "third_party/linux-oem-6.17-amd-isp4/drivers/media/platform/amd/isp4/amd_capture.ko",
+    "source_sha256": "5a171b50ea6a0bd77c94de8221461dd7c666f5a328dcfe1bd7b1315f044e95f5",
+    "persistent_override": "/lib/modules/6.17.0-1032-oem/updates/vlm-camera-pipeline/amd_capture.ko",
+    "persistent_override_sha256": "5a171b50ea6a0bd77c94de8221461dd7c666f5a328dcfe1bd7b1315f044e95f5",
+    "module_resolution": "/lib/modules/6.17.0-1032-oem/updates/vlm-camera-pipeline/amd_capture.ko",
+    "module_srcversion": "CA94CB23673E748A9ECC5F2",
+    "module_vermagic": "6.17.0-1032-oem SMP preempt mod_unload modversions",
+    "cold_reload_performed_by_installer": true,
+    "loaded_srcversion": "CA94CB23673E748A9ECC5F2",
+    "loaded_refcount": 0,
+    "depmod_database_updated": true,
+    "initramfs_entries": [],
+    "initramfs_update_required": false
+  },
+  "rollback": {
+    "stock_module": "/lib/modules/6.17.0-1032-oem/kernel/drivers/media/platform/amd/isp4/amd_capture.ko.zst",
+    "stock_sha256": "dc2db574c764210244c2f7617d435d6800499a06e7867db35113ecca9b8515fa",
+    "stock_srcversion": "B6E033F201D99AB0B7714F2",
+    "script": "scripts/uninstall_amd_isp4_dmabuf_patch.sh"
+  },
+  "system": {
+    "secure_boot": "SecureBoot disabled",
+    "kernel_tainted": 12800,
+    "camera_users": []
+  },
+  "checks": {
+    "running_expected_kernel": true,
+    "source_module_sha256_locked": true,
+    "persistent_override_installed": true,
+    "persistent_override_sha256_locked": true,
+    "persistent_override_srcversion_locked": true,
+    "persistent_override_owned_by_root": true,
+    "persistent_override_mode_0644": true,
+    "stock_module_preserved": true,
+    "stock_module_sha256_unchanged": true,
+    "depmod_updates_priority_configured": true,
+    "modinfo_resolves_persistent_override": true,
+    "modprobe_resolves_persistent_override": true,
+    "loaded_module_matches_persistent_override": true,
+    "camera_device_present_after_reload": true,
+    "camera_not_in_use": true,
+    "initramfs_has_no_stale_stock_module": true
+  }
+}

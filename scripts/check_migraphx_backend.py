@@ -31,7 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default="models/yolo26x.onnx")
     parser.add_argument(
         "--cache-dir",
-        default="models/ort-migraphx-cache/gfx1151-yolo26x",
+        default="models/ort-migraphx-cache/gfx1151-yolo26x-strict-iobinding-v1",
     )
     parser.add_argument(
         "--video",

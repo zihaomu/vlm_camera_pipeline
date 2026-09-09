@@ -1,0 +1,150 @@
+diff --git a/drivers/media/platform/amd/isp4/isp4_interface.c b/drivers/media/platform/amd/isp4/isp4_interface.c
+index 1da970fee..659e0e738 100644
+--- a/drivers/media/platform/amd/isp4/isp4_interface.c
++++ b/drivers/media/platform/amd/isp4/isp4_interface.c
+@@ -900,13 +900,20 @@ int isp4if_queue_buffer(struct isp4_interface *ispif, struct isp4if_img_buf_node
+ {
+ 	int ret;
+ 
+-	ret = isp4if_send_buffer(ispif, &buf_node->buf_info);
+-	if (ret)
+-		return ret;
++	/* Make the asynchronous completion path able to find the buffer. */
++	{
++		guard(mutex)(&ispif->bufq_mutex);
+ 
+-	guard(mutex)(&ispif->bufq_mutex);
++		list_add_tail(&buf_node->node, &ispif->bufq);
++	}
+ 
+-	list_add_tail(&buf_node->node, &ispif->bufq);
++	ret = isp4if_send_buffer(ispif, &buf_node->buf_info);
++	if (ret) {
++		guard(mutex)(&ispif->bufq_mutex);
++
++		list_del(&buf_node->node);
++		return ret;
++	}
+ 
+ 	return 0;
+ }
+diff --git a/drivers/media/platform/amd/isp4/isp4_video.c b/drivers/media/platform/amd/isp4/isp4_video.c
+index 642faff83..f055026f8 100644
+--- a/drivers/media/platform/amd/isp4/isp4_video.c
++++ b/drivers/media/platform/amd/isp4/isp4_video.c
+@@ -181,6 +181,17 @@ static void *isp4vid_vb2_vaddr(struct vb2_buffer *vb, void *buf_priv)
+ 	return buf->vaddr;
+ }
+ 
++static void isp4vid_vb2_release_dmabuf_mapping(struct isp4vid_vb2_buf *buf)
++{
++	/* External GPU dma-bufs are never CPU-vmapped; vaddr is only a cookie. */
++	buf->vaddr = NULL;
++	if (buf->bo) {
++		isp_user_buffer_free(buf->bo);
++		buf->bo = NULL;
++		buf->gpu_addr = 0;
++	}
++}
++
+ static void isp4vid_vb2_detach_dmabuf(void *mem_priv)
+ {
+ 	struct isp4vid_vb2_buf *buf = mem_priv;
+@@ -188,6 +199,13 @@ static void isp4vid_vb2_detach_dmabuf(void *mem_priv)
+ 	dev_dbg(buf->dev, "detach dmabuf of isp user bo 0x%llx size %ld",
+ 		buf->gpu_addr, buf->size);
+ 
++	/*
++	 * vb2 normally calls unmap_dmabuf before detach_dmabuf.  Keep the
++	 * teardown defensive so an error path cannot leak the imported BO or
++	 * retain the opaque completion cookie.
++	 */
++	isp4vid_vb2_release_dmabuf_mapping(buf);
++
+ 	kfree(buf);
+ }
+ 
+@@ -206,14 +224,12 @@ static void *isp4vid_vb2_attach_dmabuf(struct vb2_buffer *vb, struct device *dev
+ 	if (!buf)
+ 		return ERR_PTR(-ENOMEM);
+ 
+-	struct isp4vid_vb2_buf *dbg_buf = dbuf->priv;
+-
+ 	buf->dev = dev;
+ 	buf->dbuf = dbuf;
+ 	buf->size = size;
+ 
+-	dev_dbg(dev, "attach dmabuf of isp user bo 0x%llx size %ld",
+-		dbg_buf->gpu_addr, dbg_buf->size);
++	/* dbuf->priv belongs to the exporter and is opaque to this importer. */
++	dev_dbg(dev, "attach external dmabuf %p size %ld", dbuf, size);
+ 
+ 	return buf;
+ }
+@@ -221,31 +237,38 @@ static void *isp4vid_vb2_attach_dmabuf(struct vb2_buffer *vb, struct device *dev
+ static void isp4vid_vb2_unmap_dmabuf(void *mem_priv)
+ {
+ 	struct isp4vid_vb2_buf *buf = mem_priv;
+-	struct iosys_map map = IOSYS_MAP_INIT_VADDR(buf->vaddr);
+ 
+ 	dev_dbg(buf->dev, "unmap dmabuf of isp user bo 0x%llx size %ld",
+ 		buf->gpu_addr, buf->size);
+ 
+-	dma_buf_vunmap_unlocked(buf->dbuf, &map);
+-	buf->vaddr = NULL;
++	isp4vid_vb2_release_dmabuf_mapping(buf);
+ }
+ 
+ static int isp4vid_vb2_map_dmabuf(void *mem_priv)
+ {
+-	struct isp4vid_vb2_buf *mmap_buf = NULL;
+ 	struct isp4vid_vb2_buf *buf = mem_priv;
+-	struct iosys_map map = {};
+ 	int ret;
+ 
+-	ret = dma_buf_vmap_unlocked(buf->dbuf, &map);
++	/*
++	 * Import the foreign dma-buf through amdgpu PRIME and pin it in the ISP
++	 * GART aperture.  Reading dbuf->priv here is invalid: that pointer is
++	 * private to the exporter and is not an isp4vid_vb2_buf for dma-bufs
++	 * exported by HIP/HSA or any other driver.
++	 */
++	ret = isp_user_buffer_alloc(buf->dev, buf->dbuf,
++				    &buf->bo, &buf->gpu_addr);
+ 	if (ret) {
+-		dev_err(buf->dev, "vmap_unlocked fail");
+-		return -EFAULT;
++		dev_err(buf->dev, "fail to import external dmabuf for ISP: %d", ret);
++		return ret;
+ 	}
+-	buf->vaddr = map.vaddr;
+ 
+-	mmap_buf = buf->dbuf->priv;
+-	buf->gpu_addr = mmap_buf->gpu_addr;
++	/*
++	 * `sys_addr` is carried through the software queue only so frame-done
++	 * can identify the matching vb2 buffer; firmware receives mc_addr, not
++	 * sys_addr.  HIP/HSA exporters intentionally do not provide a CPU vmap,
++	 * so use this stable private object as the opaque completion cookie.
++	 */
++	buf->vaddr = buf;
+ 
+ 	dev_dbg(buf->dev, "map dmabuf of isp user bo 0x%llx size %ld",
+ 		buf->gpu_addr, buf->size);
+@@ -978,12 +1001,13 @@ static void isp4vid_qops_buffer_queue(struct vb2_buffer *vb)
+ 		return;
+ 	}
+ 
+-	if (isp_vdev->stream_started)
+-		isp_vdev->ops->send_buffer(isp_vdev->isp_sdev, img_buf);
+-
++	/* Publish the buffer before firmware can complete it asynchronously. */
+ 	mutex_lock(&isp_vdev->buf_list_lock);
+ 	list_add_tail(&buf->list, &isp_vdev->buf_list);
+ 	mutex_unlock(&isp_vdev->buf_list_lock);
++
++	if (isp_vdev->stream_started)
++		isp_vdev->ops->send_buffer(isp_vdev->isp_sdev, img_buf);
+ }
+ 
+ static int isp4vid_qops_start_streaming(struct vb2_queue *vq, unsigned int count)

@@ -7,6 +7,8 @@ model_dir="$workspace_dir/models"
 ultralytics_dir="$workspace_dir/third_party/ultralytics"
 ultralytics_branch="add-onnx-migraphx-backend"
 ultralytics_commit="34e213ca3ece4c18962f5bb922ec74da0c474d24"
+ultralytics_patch="$workspace_dir/patches/ultralytics-migraphx-strict-iobinding.patch"
+ultralytics_patch_sha="580502ff7b83c8131e3cc963c8e153dd8082915551361c149c72e3291477522e"
 
 export UV_CACHE_DIR="$workspace_dir/.cache/uv"
 export UV_PYTHON_DOWNLOADS=never
@@ -15,6 +17,7 @@ export TORCH_HOME="$workspace_dir/.cache/torch"
 export MPLCONFIGDIR="$workspace_dir/.cache/matplotlib"
 export HF_HOME="$workspace_dir/.cache/huggingface"
 export PYTHONPATH="/opt/rocm/lib${PYTHONPATH:+:$PYTHONPATH}"
+export ULTRALYTICS_MIGRAPHX_STRICT=1
 
 for required_command in uv git curl sha256sum rocminfo dpkg-query; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
@@ -57,22 +60,40 @@ if test ! -d "$ultralytics_dir/.git"; then
   git clone --filter=blob:none --branch "$ultralytics_branch" \
     'https://github.com/zihaomu/ultralytics.git' "$ultralytics_dir"
 fi
+printf '%s  %s\n' "$ultralytics_patch_sha" "$ultralytics_patch" | sha256sum -c -
+
 if test -n "$(git -C "$ultralytics_dir" status --porcelain)"; then
-  echo "refusing to change dirty third-party checkout: $ultralytics_dir" >&2
-  exit 5
-fi
-git -C "$ultralytics_dir" fetch origin "$ultralytics_branch"
-if test "$(git -C "$ultralytics_dir" rev-parse FETCH_HEAD)" != "$ultralytics_commit"; then
-  echo "the pinned Ultralytics branch moved; update the lock before installing" >&2
-  exit 6
-fi
-if git -C "$ultralytics_dir" show-ref --verify --quiet "refs/heads/$ultralytics_branch"; then
-  git -C "$ultralytics_dir" switch "$ultralytics_branch"
+  if test "$(git -C "$ultralytics_dir" rev-parse HEAD)" != "$ultralytics_commit" \
+    || test -n "$(git -C "$ultralytics_dir" ls-files --others --exclude-standard)" \
+    || ! git -C "$ultralytics_dir" apply --reverse --check "$ultralytics_patch"; then
+    echo "refusing an unrecognized dirty third-party checkout: $ultralytics_dir" >&2
+    exit 5
+  fi
+  actual_patch_sha="$(git -C "$ultralytics_dir" diff --binary | sha256sum | cut -d' ' -f1)"
+  if test "$actual_patch_sha" != "$ultralytics_patch_sha"; then
+    echo "the applied Ultralytics patch differs from the locked patch" >&2
+    exit 6
+  fi
 else
-  git -C "$ultralytics_dir" switch --track -c "$ultralytics_branch" \
-    "origin/$ultralytics_branch"
+  git -C "$ultralytics_dir" fetch origin "$ultralytics_branch"
+  if test "$(git -C "$ultralytics_dir" rev-parse FETCH_HEAD)" != "$ultralytics_commit"; then
+    echo "the pinned Ultralytics branch moved; update the lock before installing" >&2
+    exit 7
+  fi
+  if git -C "$ultralytics_dir" show-ref --verify --quiet "refs/heads/$ultralytics_branch"; then
+    git -C "$ultralytics_dir" switch "$ultralytics_branch"
+  else
+    git -C "$ultralytics_dir" switch --track -c "$ultralytics_branch" \
+      "origin/$ultralytics_branch"
+  fi
+  test "$(git -C "$ultralytics_dir" rev-parse HEAD)" = "$ultralytics_commit"
+  git -C "$ultralytics_dir" apply "$ultralytics_patch"
 fi
-test "$(git -C "$ultralytics_dir" rev-parse HEAD)" = "$ultralytics_commit"
+
+mkdir -p "$workspace_dir/native-lock"
+printf '%s  %s\n' "$ultralytics_patch_sha" \
+  "patches/ultralytics-migraphx-strict-iobinding.patch" \
+  > "$workspace_dir/native-lock/ultralytics-migraphx-strict-iobinding.sha256"
 
 download_verified \
   'https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/onnxruntime_migraphx-1.23.2-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl' \
@@ -87,7 +108,13 @@ cd "$workspace_dir"
 uv sync --frozen --extra migraphx --extra vlm
 uv run --frozen --extra migraphx --extra vlm python scripts/check_migraphx_backend.py \
   --model models/yolo26x.onnx \
-  --cache-dir models/ort-migraphx-cache/gfx1151-yolo26x \
-  --output output/realtime/migraphx-backend-check.json
+  --cache-dir models/ort-migraphx-cache/gfx1151-yolo26x-strict-iobinding-v1 \
+  --output output/realtime/migraphx-strict-iobinding-check.json
+
+bash "$workspace_dir/scripts/setup_zerocopy_kernels_gfx1151.sh"
+uv run --frozen --extra migraphx --extra vlm python scripts/check_zerocopy_yolo.py \
+  --model models/yolo26x.onnx \
+  --cache-dir models/ort-migraphx-cache/gfx1151-yolo26x-strict-iobinding-v1 \
+  --output output/realtime/zerocopy-yolo-check.json
 
 echo "MIGraphX uv environment is ready: $workspace_dir/.venv"

@@ -128,6 +128,7 @@ class LlamaCppConfig:
     jpeg_quality: int = 85
     timeout_seconds: float = 120.0
     startup_timeout_seconds: float = 180.0
+    hip_stream_priority: int = 0
     prompt: str = (
         "Describe this camera image in one short English sentence. "
         "Mention the main objects and action; do not speculate."
@@ -146,6 +147,8 @@ class LlamaCppConfig:
             raise ValueError("VLM JPEG quality must be between 1 and 100")
         if self.timeout_seconds <= 0 or self.startup_timeout_seconds <= 0:
             raise ValueError("VLM timeouts must be positive")
+        if self.hip_stream_priority not in (-1, 0, 1):
+            raise ValueError("HIP stream priority must be -1 (high), 0 (normal), or 1 (low)")
         if not self.prompt.strip():
             raise ValueError("VLM prompt must not be empty")
 
@@ -242,6 +245,8 @@ class LlamaCppVlm:
         self._startup_verified.clear()
         print("[vlm] stage=server_start device=ROCm0 gpu_layers=all fit=off", flush=True)
         self._log_stream = self.log_path.open("w", encoding="utf-8", buffering=1)
+        process_environment = os.environ.copy()
+        process_environment["GGML_HIP_STREAM_PRIORITY"] = str(self.config.hip_stream_priority)
         self._process = subprocess.Popen(
             self._command,
             cwd=self.workspace,
@@ -251,6 +256,7 @@ class LlamaCppVlm:
             text=True,
             bufsize=1,
             start_new_session=True,
+            env=process_environment,
         )
         self._log_thread = threading.Thread(
             target=self._copy_server_log,
@@ -300,6 +306,13 @@ class LlamaCppVlm:
                         "print_timing",
                         "cleaning up",
                         "common_memory_breakdown_print",
+                        "HIP IPC v2",
+                        "HIP device embedding",
+                        "HIP embedding D2D",
+                        "destination tensor",
+                        "physical device mismatch",
+                        "byte size mismatch",
+                        "null tensor",
                         "error",
                         "failed",
                     )
@@ -309,9 +322,7 @@ class LlamaCppVlm:
 
     def _preflight(self) -> None:
         if os.environ.get("HSA_OVERRIDE_GFX_VERSION"):
-            raise VlmStartupError(
-                "HSA_OVERRIDE_GFX_VERSION is set; refusing architecture spoofing"
-            )
+            raise VlmStartupError("HSA_OVERRIDE_GFX_VERSION is set; refusing architecture spoofing")
         for label, path in (
             ("llama-server", self.server_path),
             ("Qwen3-VL model", self.model_path),
@@ -398,6 +409,11 @@ class LlamaCppVlm:
             str(self.config.image_max_tokens),
             "--reasoning",
             "off",
+            # The default prompt cache checkpoints GPU KV state to host between
+            # camera requests. Reuse is negligible for changing images, so keep
+            # this control path disabled in the real-time server.
+            "--cache-ram",
+            "0",
             "--no-webui",
             "--no-slots",
             "--verbosity",
@@ -538,9 +554,7 @@ class LlamaCppVlm:
         return " ".join(caption.split())
 
     def runtime_info(self) -> dict[str, Any]:
-        safe_command = [
-            "<redacted>" if item == self._api_key else item for item in self._command
-        ]
+        safe_command = ["<redacted>" if item == self._api_key else item for item in self._command]
         return {
             "mode": self.mode,
             "server": str(self.server_path),
@@ -559,6 +573,8 @@ class LlamaCppVlm:
             "context_size": self.config.context_size,
             "image_max_tokens": self.config.image_max_tokens,
             "max_tokens": self.config.max_tokens,
+            "hip_stream_priority_requested": self.config.hip_stream_priority,
+            "prompt_cache_ram_mib": 0,
         }
 
     def stop(self) -> None:
@@ -584,9 +600,9 @@ class LlamaCppVlm:
         try:
             with self._log_lock:
                 return "\n".join(
-                    self.log_path.read_text(
-                        encoding="utf-8", errors="replace"
-                    ).splitlines()[-lines:]
+                    self.log_path.read_text(encoding="utf-8", errors="replace").splitlines()[
+                        -lines:
+                    ]
                 )
         except OSError:
             return ""

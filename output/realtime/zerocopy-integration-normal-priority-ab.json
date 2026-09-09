@@ -1,0 +1,249 @@
+{
+  "schema_version": 1,
+  "passed": false,
+  "scope": "Z5 component integration on one validation-only uploaded frame; camera excluded",
+  "checks": {
+    "all_frames_presented": true,
+    "effective_fps_gte_29": true,
+    "frame_loop_p95_lte_33ms": true,
+    "yolo_completion_fps_gte_25": false,
+    "yolo_failed_zero": true,
+    "yolo_queue_depth_lte_1": true,
+    "vlm_requests_completed": true,
+    "vlm_failed_zero": true,
+    "vlm_busy_drops_zero": true,
+    "vlm_queue_depth_lte_1": true,
+    "vlm_interval_error_lte_100ms": true,
+    "yolo_source_event_wait": true,
+    "split_vlm_api": true,
+    "framebuffer_readback_false": true,
+    "production_image_host_copy_zero": true
+  },
+  "performance": {
+    "frames": 180,
+    "loop_seconds": 6.000066309003159,
+    "effective_fps": 29.999668458648234,
+    "frame_loop_p50_ms": 0.6491535004897742,
+    "frame_loop_p95_ms": 1.7897959987749346,
+    "yolo_completion_fps": 23.833069942148317,
+    "yolo_schedule_drops": 37,
+    "yolo_preprocess_p50_ms": 0.2292989993293304,
+    "yolo_preprocess_p95_ms": 0.5666200013365597,
+    "yolo_p50_ms": 21.65005400092923,
+    "yolo_p95_ms": 55.966891999560175,
+    "yolo_result_age_frames_p95": 3.0,
+    "present_p50_ms": 0.39985700095712673,
+    "present_p95_ms": 1.017111000692239,
+    "vlm_latency_ms": [
+      1819.3983970013505,
+      1823.930679998739
+    ],
+    "vlm_request_intervals_seconds": [
+      2.9997305440010678
+    ]
+  },
+  "workers": {
+    "yolo": {
+      "submitted": 143,
+      "completed": 143,
+      "failed": 0,
+      "dropped_busy": 0,
+      "outstanding": false,
+      "latest_ready": false,
+      "queue_depth": 0,
+      "max_queue_depth": 1
+    },
+    "vlm": {
+      "submitted": 2,
+      "completed": 2,
+      "failed": 0,
+      "dropped_busy": 0,
+      "outstanding": false,
+      "queue_depth": 0,
+      "max_queue_depth": 1
+    }
+  },
+  "runtime": {
+    "yolo": {
+      "schema_version": 1,
+      "backend": "ultralytics-onnxruntime-migraphx-strict-iobinding",
+      "provider": "MIGraphXExecutionProvider",
+      "providers_registered": [
+        "MIGraphXExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "cpu_ep_fallback_disabled": true,
+      "migraphx_fp16": true,
+      "io_binding": true,
+      "input_device": "gpu:0",
+      "output_device": "gpu:0",
+      "input_pointer": 127731728265216,
+      "ort_output_pointer": 127726996438016,
+      "output_pool_pointers": [
+        127726996422656,
+        127726996430336
+      ],
+      "input_shape": [
+        1,
+        3,
+        640,
+        640
+      ],
+      "output_shape": [
+        1,
+        300,
+        6
+      ],
+      "input_dtype": "torch.float32",
+      "output_dtype": "torch.float32",
+      "image_h2d_bytes": 0,
+      "image_d2h_bytes": 0,
+      "tensor_h2d_bytes": 0,
+      "tensor_d2h_bytes": 0,
+      "tensor_d2d_bytes_per_run": 7200,
+      "hot_path_numpy": false,
+      "global_device_synchronize": false,
+      "input_event_wait": true,
+      "source_event_wait_supported": true,
+      "split_prepare_infer_api": true,
+      "background_inference_supported": true,
+      "fixed_input_outstanding_limit": 1,
+      "output_event_synchronized_before_ort_reuse": true,
+      "runs": 143,
+      "prepared_frames": 143,
+      "cancelled_prepared_frames": 0,
+      "dropped_input_busy": 37,
+      "dropped_no_output_slot": 0,
+      "warmup_complete": true,
+      "gpu_arch": "gfx1151",
+      "gpu_name": "AMD Radeon Graphics",
+      "model_sha256": "88568299de91d4967f239a062c9f1619f695ebd05de73cd66b8f589591aaeb0a",
+      "ultralytics_commit": "34e213ca3ece4c18962f5bb922ec74da0c474d24",
+      "ultralytics_patch_sha256": "16345a08fe8e08dd0af29f8c014cc1f3bb6482838c30310f1e114b286ea63eef",
+      "kernel_library": "/home/amd/work/vlm_camera_pipeline/.local/zerocopy-gfx1151/lib/libvlm_camera_zerocopy_kernels.so.0.1.0",
+      "kernel_library_sha256": "a3785aff206b26adf6daa2548d714024ca3f0fc27911d4b7e3be840e4e82a241",
+      "migraphx": "2.15.0.70201-81~24.04",
+      "onnxruntime": "1.23.2",
+      "cache_dir": "/home/amd/work/vlm_camera_pipeline/models/ort-migraphx-cache/gfx1151-yolo26x-strict-iobinding-v1",
+      "cache_files": [
+        "20f00-58de11c69ae52cf2-aafa5570125740ec-519c70b1cf0f20ca.mxr"
+      ]
+    },
+    "vlm": {
+      "mode": "llamacpp-ipc",
+      "server": "/home/amd/work/vlm_camera_pipeline/.build/llama-vlm-zerocopy-gfx1151/bin/llama-server",
+      "model": "/home/amd/work/vlm_camera_pipeline/models/Qwen3-VL-8B-Instruct-Q8_0.gguf",
+      "model_sha256": "cb8616bf6ed228982d9e47d7b72b42195342efa26044b0ee1873e61d9e78d3d7",
+      "mmproj": "/home/amd/work/vlm_camera_pipeline/models/mmproj-F16.gguf",
+      "mmproj_sha256": "d406d03ebabefdef86a2c86bf0c1b65f9e046f7a81c218f25de4931b46a07fc4",
+      "llama_cpp_commit": "be84695622f7be5c307d726379ddd745993669b8",
+      "device": "ROCm0",
+      "hip_code_objects": [
+        "hipv4-amdgcn-amd-amdhsa--gfx1151"
+      ],
+      "startup_seconds": 1.0494814029989357,
+      "capabilities": [
+        "completion",
+        "multimodal"
+      ],
+      "gpu_proof": {
+        "model_layers_offloaded": 37,
+        "model_layers_total": 37,
+        "mmproj_backend": "ROCm0",
+        "process_has_dev_kfd": true,
+        "cpu_fallback_detected": false
+      },
+      "command": [
+        "/home/amd/work/vlm_camera_pipeline/.build/llama-vlm-zerocopy-gfx1151/bin/llama-server",
+        "--model",
+        "/home/amd/work/vlm_camera_pipeline/models/Qwen3-VL-8B-Instruct-Q8_0.gguf",
+        "--mmproj",
+        "/home/amd/work/vlm_camera_pipeline/models/mmproj-F16.gguf",
+        "--alias",
+        "qwen3-vl-8b-instruct",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "47297",
+        "--api-key",
+        "<redacted>",
+        "--device",
+        "ROCm0",
+        "--gpu-layers",
+        "all",
+        "--fit",
+        "off",
+        "--mmproj-offload",
+        "--ctx-size",
+        "4096",
+        "--parallel",
+        "1",
+        "--threads",
+        "8",
+        "--threads-batch",
+        "8",
+        "--batch-size",
+        "512",
+        "--ubatch-size",
+        "256",
+        "--image-max-tokens",
+        "512",
+        "--mtmd-batch-max-tokens",
+        "512",
+        "--reasoning",
+        "off",
+        "--no-webui",
+        "--no-slots",
+        "--verbosity",
+        "5"
+      ],
+      "timeout_seconds": 120.0,
+      "context_size": 4096,
+      "image_max_tokens": 512,
+      "max_tokens": 32,
+      "hip_stream_priority_requested": 0,
+      "llama_cpp_repository": "/home/amd/work/vlm_camera_pipeline/third_party/llama.cpp-vlm-zerocopy",
+      "llama_cpp_patch": "/home/amd/work/vlm_camera_pipeline/patches/llama-cpp-hip-ipc-device-input.patch",
+      "llama_cpp_patch_sha256": "36db9ddb917766764b081e5abca629c3e51484e898ef22253a31b27a9bb387ae",
+      "ipc_protocol": "vlm-hip-ipc-v2",
+      "successful_requests": 2,
+      "request_latencies_ms": [
+        1817.9718699975638,
+        1823.3067430010124
+      ],
+      "image_bytes_in_http_requests": 0,
+      "production_image_h2d_bytes": 0,
+      "production_image_d2h_bytes": 0,
+      "split_prepare_caption_api": true,
+      "hip_stream_priority_policy": "low-priority-vlm-normal-priority-yolo",
+      "preprocessor": null
+    },
+    "presenter": {
+      "frame_width": 1280,
+      "frame_height": 720,
+      "window_width": 640,
+      "window_height": 360,
+      "hip_device": 0,
+      "present_pool_size": 2,
+      "frames_presented": 180,
+      "subtitle_updates": 3,
+      "subtitle_h2d_bytes": 430080,
+      "gl_vendor": "AMD",
+      "gl_renderer": "AMD Radeon Graphics (radeonsi, gfx1151, LLVM 20.1.2, DRM 3.64, 6.17.0-1032-oem)",
+      "gl_version": "4.6 (Core Profile) Mesa 25.2.8-0ubuntu0.24.04.2",
+      "interop_device_proof": "hsa_amd_portable_export_dmabuf + EGL_EXT_image_dma_buf_import",
+      "font_path": "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+    }
+  },
+  "validation_only_host_transfers": {
+    "source_upload_bytes": 2764800,
+    "excluded_from_production_hot_path": true
+  },
+  "production_contract": {
+    "source": "camera clean RGB HIP pointer",
+    "image_h2d_bytes": 0,
+    "image_d2h_bytes": 0,
+    "framebuffer_readback": false,
+    "camera_integration_blocked_by_z0": true
+  }
+}

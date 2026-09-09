@@ -1,0 +1,178 @@
+{
+  "checks": {
+    "bounded_input_pool_backpressure": true,
+    "bounded_pool_backpressure": true,
+    "camera_source_event_wait_supported": true,
+    "cpu_ep_fallback_disabled": true,
+    "detections_remain_on_gpu_until_diagnostic": true,
+    "gfx1151_kernel_code_object": true,
+    "hot_path_copy_counters_zero": true,
+    "input_pointer_stable": true,
+    "io_binding": true,
+    "migraphx_fp16": true,
+    "no_global_device_synchronize": true,
+    "ort_output_pointer_stable": true,
+    "preprocess_max_abs_error_lte_3_over_255": true,
+    "preprocess_mean_abs_error_lte_1_over_255": true,
+    "provider_is_migraphx": true,
+    "two_distinct_input_pool_slots": true,
+    "two_distinct_output_pool_slots": true
+  },
+  "detections": {
+    "diagnostic_d2h_bytes": 7200,
+    "valid_count": 5,
+    "values": [
+      [
+        833.25,
+        3.0,
+        1656.0,
+        1070.25,
+        0.96337890625,
+        0.0
+      ],
+      [
+        1.5,
+        101.625,
+        515.25,
+        598.5,
+        0.94140625,
+        7.0
+      ],
+      [
+        1608.0,
+        2.25,
+        1918.5,
+        997.5,
+        0.92822265625,
+        0.0
+      ],
+      [
+        635.25,
+        349.5,
+        701.25,
+        433.5,
+        0.67431640625,
+        0.0
+      ],
+      [
+        589.5,
+        225.0,
+        1692.0,
+        663.75,
+        0.55224609375,
+        2.0
+      ]
+    ]
+  },
+  "kernel_code_objects": [
+    "hipv4-amdgcn-amd-amdhsa--gfx1151"
+  ],
+  "latency_ms": {
+    "mean": 12.559,
+    "p50": 12.345,
+    "p95": 13.773
+  },
+  "letterbox": {
+    "gain": 0.3333333432674408,
+    "max_absolute_error": 0.0,
+    "mean_absolute_error": 0.0,
+    "pad_left": 0,
+    "pad_top": 140,
+    "resized": [
+      640,
+      360
+    ],
+    "source_shape": [
+      1080,
+      1920,
+      3
+    ],
+    "target_shape": [
+      1,
+      3,
+      640,
+      640
+    ]
+  },
+  "passed": true,
+  "runtime": {
+    "backend": "ultralytics-onnxruntime-migraphx-strict-iobinding",
+    "background_inference_supported": true,
+    "cache_dir": "/home/amd/work/vlm_camera_pipeline/models/ort-migraphx-cache/gfx1151-yolo26x-strict-iobinding-v1",
+    "cache_files": [
+      "20f00-58de11c69ae52cf2-aafa5570125740ec-519c70b1cf0f20ca.mxr"
+    ],
+    "cancelled_prepared_frames": 0,
+    "cpu_ep_fallback_disabled": true,
+    "dropped_input_busy": 1,
+    "dropped_no_output_slot": 1,
+    "fixed_input_outstanding_limit": 2,
+    "global_device_synchronize": false,
+    "gpu_arch": "gfx1151",
+    "gpu_name": "AMD Radeon Graphics",
+    "hot_path_numpy": false,
+    "image_d2h_bytes": 0,
+    "image_h2d_bytes": 0,
+    "input_device": "gpu:0",
+    "input_dtype": "torch.float32",
+    "input_event_wait": true,
+    "input_pointer": 130923639008256,
+    "input_pool_pointers": [
+      130923639008256,
+      130923643923456
+    ],
+    "input_pool_size": 2,
+    "input_shape": [
+      1,
+      3,
+      640,
+      640
+    ],
+    "io_binding": true,
+    "kernel_library": "/home/amd/work/vlm_camera_pipeline/.local/zerocopy-gfx1151/lib/libvlm_camera_zerocopy_kernels.so.0.1.0",
+    "kernel_library_sha256": "a3785aff206b26adf6daa2548d714024ca3f0fc27911d4b7e3be840e4e82a241",
+    "migraphx": "2.15.0.70201-81~24.04",
+    "migraphx_fp16": true,
+    "model_sha256": "88568299de91d4967f239a062c9f1619f695ebd05de73cd66b8f589591aaeb0a",
+    "newest_pending_snapshot_supported": true,
+    "onnxruntime": "1.23.2",
+    "ort_output_pointer": 130922473077760,
+    "output_device": "gpu:0",
+    "output_dtype": "torch.float32",
+    "output_event_synchronized_before_ort_reuse": true,
+    "output_pool_pointers": [
+      130922473062400,
+      130922473070080
+    ],
+    "output_pool_size": 2,
+    "output_shape": [
+      1,
+      300,
+      6
+    ],
+    "prepared_frames": 14,
+    "provider": "MIGraphXExecutionProvider",
+    "providers_registered": [
+      "MIGraphXExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "runs": 14,
+    "schema_version": 1,
+    "source_event_wait_supported": true,
+    "split_prepare_infer_api": true,
+    "tensor_d2d_bytes_per_run": 7200,
+    "tensor_d2h_bytes": 0,
+    "tensor_h2d_bytes": 0,
+    "ultralytics_commit": "34e213ca3ece4c18962f5bb922ec74da0c474d24",
+    "ultralytics_patch_sha256": "580502ff7b83c8131e3cc963c8e153dd8082915551361c149c72e3291477522e",
+    "warmup_complete": true
+  },
+  "schema_version": 1,
+  "scope": "Z2 isolated GPU-pointer component gate; production camera integration is separate",
+  "validation_only_host_transfers": {
+    "detection_download_bytes": 7200,
+    "excluded_from_production_hot_path": true,
+    "preprocess_download_bytes": 4915200,
+    "source_upload_bytes": 6220800
+  }
+}

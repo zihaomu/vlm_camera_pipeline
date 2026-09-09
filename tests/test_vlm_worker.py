@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 from src.camera_io import CapturedFrame, LatestFrameSlot
-from src.vlm import LatestCaptionSlot, LlamaCppConfig, VlmCaption, VlmWorker
+from src.vlm import LatestCaptionSlot, LlamaCppConfig, LlamaCppVlm, VlmCaption, VlmWorker
 
 
 def make_frame(sequence: int) -> CapturedFrame:
@@ -172,3 +173,10 @@ def test_caption_expiry_and_embedded_server_config_guards() -> None:
         LlamaCppConfig(host="0.0.0.0")
     with pytest.raises(ValueError, match="at least 1024"):
         LlamaCppConfig(context_size=512)
+
+
+def test_llama_command_disables_prompt_cache_host_checkpoints(tmp_path: Path) -> None:
+    server = LlamaCppVlm(LlamaCppConfig(), workspace=tmp_path)
+    command = server._build_command()
+    cache_index = command.index("--cache-ram")
+    assert command[cache_index + 1] == "0"

@@ -1,0 +1,269 @@
+{
+  "backend": "onnxruntime-migraphx",
+  "camera_format": {
+    "fourcc": "NV12",
+    "fps": 30.0,
+    "height": 720,
+    "width": 1280
+  },
+  "camera_frames": 19214,
+  "camera_read_failures": 0,
+  "capture_fps": 29.826,
+  "detector": {
+    "backend": "onnxruntime-migraphx",
+    "cache_dir": "/home/amd/work/vlm_camera_pipeline/models/ort-migraphx-cache/gfx1151-yolo26x",
+    "cache_files": [
+      "20f00-58de11c69ae52cf2-aafa5570125740ec-519c70b1cf0f20ca.mxr"
+    ],
+    "cpu_ep_fallback_disabled": true,
+    "device": "cuda:0",
+    "external_nms": false,
+    "gpu_arch": "gfx1151",
+    "gpu_name": "AMD Radeon Graphics",
+    "input_residency": "host-copy",
+    "input_shape": [
+      1,
+      3,
+      640,
+      640
+    ],
+    "io_binding": false,
+    "loaded": true,
+    "migraphx_fp16": true,
+    "model_end2end": true,
+    "model_path": "/home/amd/work/vlm_camera_pipeline/models/yolo26x.onnx",
+    "model_sha256": "88568299de91d4967f239a062c9f1619f695ebd05de73cd66b8f589591aaeb0a",
+    "onnxruntime": "1.23.2",
+    "output_residency": "host-copy",
+    "output_shape": [
+      1,
+      300,
+      6
+    ],
+    "provider": "MIGraphXExecutionProvider",
+    "provider_options": {
+      "device_id": "0",
+      "migraphx_arena_extend_strategy": "kNextPowerOfTwo",
+      "migraphx_bf16_enable": "0",
+      "migraphx_exhaustive_tune": "0",
+      "migraphx_external_alloc": "0",
+      "migraphx_external_empty_cache": "0",
+      "migraphx_external_free": "0",
+      "migraphx_fp16_enable": "1",
+      "migraphx_fp8_enable": "0",
+      "migraphx_int8_calibration_table_name": "",
+      "migraphx_int8_enable": "0",
+      "migraphx_int8_use_native_calibration_table": "0",
+      "migraphx_max_compiled_models": "1",
+      "migraphx_max_dynamic_batch": "0",
+      "migraphx_mem_limit": "18446744073709551615",
+      "migraphx_model_cache_dir": "\"/home/amd/work/vlm_camera_pipeline/models/ort-migraphx-cache/gfx1151-yolo26x\""
+    },
+    "providers": [
+      "MIGraphXExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "strict_first_run_ms": 17.607,
+    "strict_preflight_passed": true,
+    "strict_session_seconds": 1.444,
+    "ultralytics_branch": "add-onnx-migraphx-backend",
+    "ultralytics_commit": "34e213ca3ece4c18962f5bb922ec74da0c474d24"
+  },
+  "display_fps": 29.822,
+  "displayed_frames": 19211,
+  "dropped_frames": 2388,
+  "elapsed_seconds": 644.198,
+  "exit_reason": "requested",
+  "gpu_power_watts": {
+    "count": 635,
+    "mean": 58.711,
+    "p50": 59.041,
+    "p95": 59.092,
+    "p99": 59.097
+  },
+  "gpu_temperature_c": {
+    "count": 635,
+    "mean": 67.926,
+    "p50": 69.0,
+    "p95": 71.0,
+    "p99": 71.0
+  },
+  "inference_fps": 26.119,
+  "latency_ms": {
+    "capture_to_display": {
+      "count": 19211,
+      "mean": 16.791,
+      "p50": 17.037,
+      "p95": 23.581,
+      "p99": 44.467
+    },
+    "capture_to_infer": {
+      "count": 16826,
+      "mean": 40.806,
+      "p50": 44.276,
+      "p95": 76.116,
+      "p99": 81.279
+    },
+    "display": {
+      "count": 19211,
+      "mean": 14.007,
+      "p50": 15.156,
+      "p95": 19.009,
+      "p99": 19.935
+    },
+    "external_nms": {
+      "count": 0,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null
+    },
+    "inference": {
+      "count": 16826,
+      "mean": 26.403,
+      "p50": 31.433,
+      "p95": 43.365,
+      "p99": 45.133
+    },
+    "postprocess": {
+      "count": 16826,
+      "mean": 1.073,
+      "p50": 0.751,
+      "p95": 2.623,
+      "p99": 6.28
+    },
+    "preprocess": {
+      "count": 16826,
+      "mean": 2.511,
+      "p50": 1.758,
+      "p95": 5.089,
+      "p99": 7.954
+    }
+  },
+  "pipeline": {
+    "display": true,
+    "display_layout": "subtitle",
+    "display_mode": "live",
+    "max_latency_ms": 150.0,
+    "mode": "detector",
+    "vlm_caption_expiry_seconds": 20.0,
+    "vlm_interval_seconds": 3.0,
+    "warmup_iterations": 2,
+    "window_scale": 0.75
+  },
+  "process_rss_bytes": {
+    "count": 635,
+    "current": 3142107136,
+    "first": 3148853248,
+    "growth": -6746112,
+    "maximum": 3163537408,
+    "minimum": 3142107136
+  },
+  "processed_frames": 16826,
+  "record": {
+    "mode": "off",
+    "queue_depth": 0
+  },
+  "schema_version": 1,
+  "skipped_before_inference": 2388,
+  "vlm": {
+    "cancelled": 0,
+    "capture_to_caption_ms": {
+      "count": 215,
+      "mean": 1985.661,
+      "p50": 1969.321,
+      "p95": 2231.415,
+      "p99": 2304.945
+    },
+    "failures": 0,
+    "in_flight": 0,
+    "last_error": null,
+    "latest_caption": "<redacted: caption text is not persisted>",
+    "latest_caption_age_seconds": 0.0,
+    "latest_sequence": 19170,
+    "mode": "llamacpp",
+    "queue_depth": 1,
+    "request_latency_ms": {
+      "count": 215,
+      "mean": 1969.086,
+      "p50": 1951.289,
+      "p95": 2215.39,
+      "p99": 2289.907
+    },
+    "requests": 215,
+    "runtime": {
+      "capabilities": [
+        "completion",
+        "multimodal"
+      ],
+      "command": [
+        "/home/amd/work/vlm_camera_pipeline/third_party/llama.cpp/build-gfx1151/bin/llama-server",
+        "--model",
+        "/home/amd/work/vlm_camera_pipeline/models/Qwen3-VL-8B-Instruct-Q8_0.gguf",
+        "--mmproj",
+        "/home/amd/work/vlm_camera_pipeline/models/mmproj-F16.gguf",
+        "--alias",
+        "qwen3-vl-8b-instruct",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "43999",
+        "--api-key",
+        "<redacted>",
+        "--device",
+        "ROCm0",
+        "--gpu-layers",
+        "all",
+        "--fit",
+        "off",
+        "--mmproj-offload",
+        "--ctx-size",
+        "4096",
+        "--parallel",
+        "1",
+        "--threads",
+        "8",
+        "--threads-batch",
+        "8",
+        "--batch-size",
+        "512",
+        "--ubatch-size",
+        "256",
+        "--image-max-tokens",
+        "512",
+        "--mtmd-batch-max-tokens",
+        "512",
+        "--reasoning",
+        "off",
+        "--no-webui",
+        "--no-slots",
+        "--verbosity",
+        "5"
+      ],
+      "context_size": 4096,
+      "device": "ROCm0",
+      "gpu_proof": {
+        "cpu_fallback_detected": false,
+        "mmproj_backend": "ROCm0",
+        "model_layers_offloaded": 37,
+        "model_layers_total": 37,
+        "process_has_dev_kfd": true
+      },
+      "hip_code_objects": [
+        "hipv4-amdgcn-amd-amdhsa--gfx1151"
+      ],
+      "image_max_tokens": 512,
+      "llama_cpp_commit": "0b1bad14ff204627636aeb1de22ddcd5acb859d4",
+      "max_tokens": 64,
+      "mmproj": "/home/amd/work/vlm_camera_pipeline/models/mmproj-F16.gguf",
+      "mmproj_sha256": "d406d03ebabefdef86a2c86bf0c1b65f9e046f7a81c218f25de4931b46a07fc4",
+      "mode": "llamacpp",
+      "model": "/home/amd/work/vlm_camera_pipeline/models/Qwen3-VL-8B-Instruct-Q8_0.gguf",
+      "model_sha256": "cb8616bf6ed228982d9e47d7b72b42195342efa26044b0ee1873e61d9e78d3d7",
+      "server": "/home/amd/work/vlm_camera_pipeline/third_party/llama.cpp/build-gfx1151/bin/llama-server",
+      "startup_seconds": 1.0193259040006524,
+      "timeout_seconds": 120.0
+    },
+    "successes": 215
+  }
+}

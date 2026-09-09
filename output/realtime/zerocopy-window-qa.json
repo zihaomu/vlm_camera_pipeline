@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "component": "real-camera-visible-window-qa",
+  "captured_at": "2026-09-09T19:31:26+08:00",
+  "status": "passed",
+  "environment": {
+    "display": ":0",
+    "session_type": "wayland",
+    "client_backend": "X11/XWayland EGL",
+    "desktop_size": [2880, 1800],
+    "renderer": "AMD Radeon Graphics (radeonsi, gfx1151)"
+  },
+  "geometry_observations": {
+    "initial_client": {"width": 640, "height": 360, "viewable": true},
+    "resized_client": {"width": 720, "height": 405, "viewable": true},
+    "fullscreen_client": {"x": 0, "y": 0, "width": 2880, "height": 1800},
+    "fullscreen_state_atom_observed": "_NET_WM_STATE_FULLSCREEN",
+    "restored_client": {"x": 182, "y": 188, "width": 720, "height": 405},
+    "wm_move": {
+      "before": [182, 188],
+      "after": [420, 374],
+      "accepted": true
+    }
+  },
+  "visual_observations": {
+    "subtitle_inside_video_surface": true,
+    "subtitle_second_line_not_clipped": true,
+    "english_word_boundary_wrap": true,
+    "aspect_ratio_preserved_after_resize": true,
+    "non_content_area_cleared_to_black": true,
+    "detection_boxes_visible": true
+  },
+  "control_observations": {
+    "resize_configure_notify_applied": true,
+    "f11_enter_fullscreen": true,
+    "f11_exit_restored_geometry": true,
+    "escape_closed_window": true,
+    "escape_clean_runtime_summary": true,
+    "synthetic_pointer_drag": "not injected by the Wayland/XWayland security boundary; the equivalent window-manager move request was accepted"
+  },
+  "screenshots": {
+    "initial_word_wrap": "output/realtime/zerocopy-window-qa-wordwrap.png",
+    "resized_word_wrap": "output/realtime/zerocopy-window-qa-wordwrap-resized.png",
+    "fullscreen_before_word_wrap_patch": "output/realtime/zerocopy-window-qa-fullscreen.png",
+    "capture_is_validation_only": true,
+    "production_framebuffer_readback": false
+  },
+  "real_camera_escape_run": {
+    "metrics": "output/realtime/metrics-yolo-vlm-zerocopy-window-escape-qa.jsonl",
+    "duration_seconds": 28.523559396000564,
+    "frames_presented": 844,
+    "effective_fps": 29.589574999477154,
+    "yolo_completed": 845,
+    "yolo_completion_fps": 29.624633737628194,
+    "vlm_completed": 10,
+    "camera_frames_acquired": 845,
+    "camera_frames_requeued": 845,
+    "runtime_checks_all_passed": true
+  },
+  "visible_presenter_run": {
+    "report": "output/realtime/zerocopy-present-drag-qa.json",
+    "frames_presented": 1800,
+    "effective_fps": 29.999952222575903,
+    "present_call_p95_ms": 1.3757780006926623,
+    "all_checks_passed": true
+  },
+  "checks": {
+    "initial_half_scale_visible": true,
+    "resize_visible_and_not_clipped": true,
+    "word_wrap_visible_and_not_clipped": true,
+    "fullscreen_enter_exit": true,
+    "geometry_restored_after_fullscreen": true,
+    "window_manager_move_accepted": true,
+    "escape_clean_exit": true,
+    "real_camera_runtime_checks_passed": true,
+    "visible_presenter_1800_frames_passed": true
+  }
+}

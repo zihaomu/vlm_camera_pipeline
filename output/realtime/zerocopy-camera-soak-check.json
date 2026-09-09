@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "component": "strict-camera-yolo-vlm-soak",
+  "status": "passed",
+  "policy": {
+    "minimum_seconds": 1200.0,
+    "minimum_minutes": 20.0,
+    "approved_by_user": true,
+    "legacy_30_minute_flag_in_input_ignored": true
+  },
+  "input": "output/realtime/metrics-yolo-vlm-zerocopy-camera-soak-30m.jsonl",
+  "performance": {
+    "duration_seconds": 1308.3054882820002,
+    "frames": 39007,
+    "effective_present_fps": 29.814902061766933,
+    "frame_loop_p95_ms": 34.71466600012718,
+    "yolo_completed": 38246,
+    "yolo_completion_fps": 29.23323363125434,
+    "yolo_inference_p95_ms": 37.734883000211994,
+    "vlm_completed": 437,
+    "vlm_latency_p95_ms": 2954.0676130000065,
+    "vlm_start_error_p95_ms": 32.34411399989767
+  },
+  "resource_state": {
+    "camera_frames_acquired": 39007,
+    "camera_frames_requeued": 39007,
+    "camera_clean_drops": 0,
+    "camera_active_leases": 0,
+    "camera_users_after_run": "",
+    "loaded_module_srcversion": "CA94CB23673E748A9ECC5F2",
+    "kernel_error_lines": []
+  },
+  "checks": {
+    "completed": true,
+    "duration_meets_user_approved_threshold": true,
+    "all_runtime_checks_passed": true,
+    "all_frames_presented": true,
+    "all_frames_requeued": true,
+    "camera_drop_and_lease_zero": true,
+    "vlm_worker_clean": true,
+    "yolo_worker_clean": true,
+    "vlm_cadence_clean": true,
+    "production_image_host_copy_zero": true,
+    "patched_camera_module_still_active": true,
+    "camera_released_after_run": true,
+    "kernel_gpu_camera_errors_zero": true
+  }
+}

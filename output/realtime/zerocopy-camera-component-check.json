@@ -1,0 +1,67 @@
+{
+  "checks": {
+    "bounded_camera_pool_contract": true,
+    "bounded_clean_rgb_pool_contract": true,
+    "component_preflight": true,
+    "gfx1151": true,
+    "no_camera_opened": true,
+    "nv12_rgb_exact": true,
+    "opencv5_hip": true,
+    "opencv_pointer_alias": true,
+    "production_image_d2h_zero": true,
+    "production_image_h2d_zero": true,
+    "strict_driver_gate_matches_loaded_module": true
+  },
+  "gate": {
+    "camera_opened": false,
+    "status": "runtime_probe_ready",
+    "strict_driver_preflight_error": null,
+    "strict_driver_preflight_passed": true,
+    "z0_passed": false
+  },
+  "numerical_reference": {
+    "format": "NV12",
+    "matrix": "BT.601 limited range",
+    "max_absolute_error": 0,
+    "mean_absolute_error": 0.0,
+    "output_shape": [
+      48,
+      64,
+      3
+    ],
+    "source_shape": [
+      72,
+      64
+    ]
+  },
+  "passed": true,
+  "preflight": {
+    "active_driver_patched": true,
+    "expected_patched_module_srcversion": "CA94CB23673E748A9ECC5F2",
+    "gpu_code_object": "gfx1151",
+    "isp4_patch_sha256": "dcdb1fb2f3e1c611ab56fc2b8b51ca9e7abd965fbf440b2b128412d25a20b16b",
+    "isp4_source_commit": "32bed5152a6e284e02c0f803772bc48960f06e32",
+    "library": "/home/amd/work/vlm_camera_pipeline/.local/zerocopy-gfx1151/lib/libvlm_camera_gpu_capture.so.0.1.0",
+    "library_sha256": "5e36ce992a3861e817356562abe3bacc75f19eb7b531e096b9fda6f39ab305fa",
+    "loaded_module_srcversion": "CA94CB23673E748A9ECC5F2",
+    "opencv_path": "/home/amd/work/vlm_camera_pipeline/.local/opencv5-gfx1151/python/cv2/__init__.py",
+    "opencv_pointer_factory": true,
+    "opencv_version": "5.1.0-dev"
+  },
+  "production_contract": {
+    "camera_pool_minimum": 4,
+    "clean_rgb_pool_minimum": 3,
+    "global_device_synchronize": false,
+    "image_d2h_bytes": 0,
+    "image_h2d_bytes": 0,
+    "memory_path": "hipMalloc->HSA-DMA-BUF->V4L2-DMABUF->ISP-PRIME/GART",
+    "python_pixels": false
+  },
+  "schema_version": 1,
+  "scope": "camera component build and offline kernel; Z0 runtime is not exercised",
+  "validation_only_host_transfers": {
+    "excluded_from_production_hot_path": true,
+    "nv12_upload_bytes": 4608,
+    "rgb_download_bytes": 9216
+  }
+}

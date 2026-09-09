@@ -1,0 +1,183 @@
+diff --git a/ultralytics/nn/autobackend.py b/ultralytics/nn/autobackend.py
+index 27960790..2d1ecfe0 100644
+--- a/ultralytics/nn/autobackend.py
++++ b/ultralytics/nn/autobackend.py
+@@ -311,9 +311,10 @@ class AutoBackend(nn.Module):
+             im = torch.empty(*imgsz, dtype=torch.half if self.fp16 else torch.float, device=self.device)  # input
+             for _ in range(2 if self.format == "torchscript" else 1):
+                 self.forward(im)  # warmup model
+-                warmup_boxes = torch.rand(1, 84, 16, device=self.device)  # 16 boxes works best empirically
+-                warmup_boxes[:, :4] *= imgsz[-1]
+-                non_max_suppression(warmup_boxes)  # warmup NMS
++                if not self.end2end:
++                    warmup_boxes = torch.rand(1, 84, 16, device=self.device)  # 16 boxes works best empirically
++                    warmup_boxes[:, :4] *= imgsz[-1]
++                    non_max_suppression(warmup_boxes)  # warmup NMS
+ 
+     @staticmethod
+     def _model_type(p: str = "path/to/model.pt", dnn: bool = False) -> str:
+diff --git a/ultralytics/nn/backends/onnx.py b/ultralytics/nn/backends/onnx.py
+index 55430f06..ce301ac5 100644
+--- a/ultralytics/nn/backends/onnx.py
++++ b/ultralytics/nn/backends/onnx.py
+@@ -18,7 +18,7 @@ class ONNXBackend(BaseBackend):
+     """Microsoft ONNX Runtime inference backend with optional OpenCV DNN support.
+ 
+     Loads and runs inference with ONNX models (.onnx files) using Microsoft ONNX Runtime with MIGraphX/CUDA/CoreML
+-    execution providers, or OpenCV DNN for lightweight CPU inference. Supports IO binding for optimized CUDA inference
++    execution providers, or OpenCV DNN for lightweight CPU inference. Supports IO binding for optimized GPU inference
+     with static input shapes.
+     """
+ 
+@@ -68,17 +68,36 @@ class ONNXBackend(BaseBackend):
+             # Select execution provider
+             available = onnxruntime.get_available_providers()
+             device_id = self.device.index if isinstance(self.device, torch.device) and self.device.index else 0
+-            use_cuda_io_binding = False
++            use_gpu_io_binding = False
++            session_options = None
++            self.migraphx_strict = False
+             if gpu and "MIGraphXExecutionProvider" in available:
+                 migraphx_options = {"device_id": str(device_id)}
+                 if requested_fp16:
+                     migraphx_options["migraphx_fp16_enable"] = "1"
+                 if cache_dir := os.environ.get("ULTRALYTICS_MIGRAPHX_CACHE_DIR"):
+                     migraphx_options["migraphx_model_cache_dir"] = cache_dir
+-                providers = [("MIGraphXExecutionProvider", migraphx_options), "CPUExecutionProvider"]
++                self.migraphx_strict = os.environ.get("ULTRALYTICS_MIGRAPHX_STRICT", "0").lower() in {
++                    "1",
++                    "true",
++                    "yes",
++                    "on",
++                }
++                providers = [("MIGraphXExecutionProvider", migraphx_options)]
++                if not self.migraphx_strict:
++                    providers.append("CPUExecutionProvider")
++                use_gpu_io_binding = True
++                session_options = onnxruntime.SessionOptions()
++                session_options.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
++                session_options.intra_op_num_threads = int(os.environ.get("ULTRALYTICS_MIGRAPHX_INTRA_OP_THREADS", "1"))
++                session_options.inter_op_num_threads = 1
++                session_options.add_session_config_entry("session.intra_op.allow_spinning", "0")
++                session_options.add_session_config_entry("session.inter_op.allow_spinning", "0")
++                if self.migraphx_strict:
++                    session_options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
+             elif gpu and "CUDAExecutionProvider" in available:
+                 providers = [("CUDAExecutionProvider", {"device_id": device_id}), "CPUExecutionProvider"]
+-                use_cuda_io_binding = True
++                use_gpu_io_binding = True
+             elif self.device.type == "mps" and "CoreMLExecutionProvider" in available:
+                 providers = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+             else:
+@@ -92,10 +111,11 @@ class ONNXBackend(BaseBackend):
+                 f"{providers[0] if isinstance(providers[0], str) else providers[0][0]}"
+             )
+ 
+-            self.session = onnxruntime.InferenceSession(weight, providers=providers)
++            self.session = onnxruntime.InferenceSession(weight, sess_options=session_options, providers=providers)
+             self.providers = self.session.get_providers()
+             self.provider = self.providers[0] if self.providers else None
+             self.provider_options = self.session.get_provider_options()
++            self.input_name = self.session.get_inputs()[0].name
+             self.output_names = [x.name for x in self.session.get_outputs()]
+ 
+             # Get metadata
+@@ -110,8 +130,8 @@ class ONNXBackend(BaseBackend):
+             if self.migraphx_fp16 and not self.fp16:
+                 LOGGER.info("MIGraphX FP16 provider option is enabled; model input remains FP32.")
+ 
+-            # Setup IO binding for CUDA
+-            self.use_io_binding = not self.dynamic and use_cuda_io_binding
++            # Setup IO binding for static-shape GPU providers.
++            self.use_io_binding = not self.dynamic and use_gpu_io_binding
+             if self.use_io_binding:
+                 self.io = self.session.io_binding()
+                 self.bindings = []
+@@ -131,7 +151,7 @@ class ONNXBackend(BaseBackend):
+                     self.bindings.append(y_tensor)
+ 
+     def forward(self, im: torch.Tensor) -> torch.Tensor | list[torch.Tensor] | np.ndarray:
+-        """Run ONNX inference using IO binding (CUDA) or standard session execution.
++        """Run ONNX inference using GPU IO binding or standard session execution.
+ 
+         Args:
+             im (torch.Tensor): Input image tensor in BCHW format, normalized to [0, 1].
+@@ -146,10 +166,12 @@ class ONNXBackend(BaseBackend):
+ 
+         # ONNX Runtime
+         if self.use_io_binding:
++            if self.migraphx_strict and (im.device.type != "cuda" or not im.is_contiguous()):
++                raise RuntimeError("strict MIGraphX IO binding requires a contiguous GPU input tensor")
+             if self.device.type == "cpu":
+                 im = im.cpu()
+             self.io.bind_input(
+-                name="images",
++                name=self.input_name,
+                 device_type=im.device.type,
+                 device_id=im.device.index if im.device.type == "cuda" else 0,
+                 element_type=np.float16 if self.fp16 else np.float32,
+@@ -159,7 +181,7 @@ class ONNXBackend(BaseBackend):
+             self.session.run_with_iobinding(self.io)
+             return self.bindings
+         else:
+-            return self.session.run(self.output_names, {self.session.get_inputs()[0].name: im.cpu().numpy()})
++            return self.session.run(self.output_names, {self.input_name: im.cpu().numpy()})
+ 
+ 
+ class ONNXIMXBackend(ONNXBackend):
+diff --git a/ultralytics/utils/patches.py b/ultralytics/utils/patches.py
+index 9ccf0cda..59962174 100644
+--- a/ultralytics/utils/patches.py
++++ b/ultralytics/utils/patches.py
+@@ -15,10 +15,13 @@ import torch
+ from PIL import Image
+ 
+ # OpenCV Multilanguage-friendly functions ------------------------------------------------------------------------------
+-_imshow = cv2.imshow  # copy to avoid recursion errors
++_imshow = getattr(cv2, "imshow", None)  # highgui is optional in strict GPU deployments
++_IMREAD_COLOR = getattr(cv2, "IMREAD_COLOR", 1)
++_IMREAD_GRAYSCALE = getattr(cv2, "IMREAD_GRAYSCALE", 0)
++_IMREAD_UNCHANGED = getattr(cv2, "IMREAD_UNCHANGED", -1)
+ 
+ 
+-def imread(filename: str, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | None:
++def imread(filename: str, flags: int = _IMREAD_COLOR) -> np.ndarray | None:
+     """Read an image from a file with multilanguage filename support.
+ 
+     Args:
+@@ -37,7 +40,7 @@ def imread(filename: str, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | None:
+     except (FileNotFoundError, OSError):
+         return None
+     if filename.endswith((".tiff", ".tif")):
+-        success, frames = cv2.imdecodemulti(file_bytes, cv2.IMREAD_UNCHANGED)
++        success, frames = cv2.imdecodemulti(file_bytes, _IMREAD_UNCHANGED)
+         if success:
+             # Handle multi-frame TIFFs and color images
+             return frames[0] if len(frames) == 1 and frames[0].ndim == 3 else np.stack(frames, axis=2)
+@@ -89,7 +92,7 @@ def image_open(filename, *args, **kwargs):
+ Image.open = image_open  # apply patch
+ 
+ 
+-def _imread_pil(filename: str, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | None:
++def _imread_pil(filename: str, flags: int = _IMREAD_COLOR) -> np.ndarray | None:
+     """Read an image using PIL as fallback for formats not supported by OpenCV.
+ 
+     Args:
+@@ -101,7 +104,7 @@ def _imread_pil(filename: str, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | No
+     """
+     try:
+         with Image.open(filename) as img:
+-            if flags == cv2.IMREAD_GRAYSCALE:
++            if flags == _IMREAD_GRAYSCALE:
+                 return np.asarray(img.convert("L"))
+             return cv2.cvtColor(np.asarray(img.convert("RGB")), cv2.COLOR_RGB2BGR)
+     except Exception:
+@@ -150,6 +153,8 @@ def imshow(winname: str, mat: np.ndarray) -> None:
+         >>> img[:100, :100] = [255, 0, 0]  # Add a blue square
+         >>> imshow("Example Window", img)  # Display the image
+     """
++    if _imshow is None:
++        raise RuntimeError("OpenCV was built without highgui/imshow support")
+     _imshow(winname.encode("unicode_escape").decode(), mat)
+ 
+ 

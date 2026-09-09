@@ -19,7 +19,7 @@ def test_combined_demo_has_a_separate_migraphx_entrypoint() -> None:
     args = parser.parse_args([])
 
     assert args.yolo_model == "models/yolo26x.onnx"
-    assert args.migraphx_cache_dir.endswith("gfx1151-yolo26x")
+    assert args.migraphx_cache_dir.endswith("gfx1151-yolo26x-strict-iobinding-v1")
     assert args.vlm_interval == 3.0
     assert args.window_scale == 0.75
     validate_args(parser, args)

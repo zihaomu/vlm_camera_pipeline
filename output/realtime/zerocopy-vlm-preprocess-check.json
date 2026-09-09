@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "component": "qwen3-vl-hip-ipc-v2",
+  "gpu": {
+    "name": "AMD Radeon Graphics",
+    "architecture": "gfx1151"
+  },
+  "numerical_reference": {
+    "source_shape": [
+      1080,
+      1920,
+      3
+    ],
+    "target_shape": [
+      3,
+      512,
+      960
+    ],
+    "resized_shape": [
+      512,
+      911
+    ],
+    "padding_left_top": [
+      24,
+      0
+    ],
+    "max_abs_error": 0.007843151688575745,
+    "mean_abs_error": 2.7126733925797453e-07,
+    "mismatched_elements": 51,
+    "elements": 1474560,
+    "validation_only_h2d_bytes": 6220800,
+    "validation_only_d2h_bytes": 5898240,
+    "passed": true
+  },
+  "preprocessor": {
+    "protocol": "vlm-hip-ipc-v2",
+    "device_id": 0,
+    "device_uuid": "58580000000000000000000000000000",
+    "source_shape": [
+      1080,
+      1920,
+      3
+    ],
+    "target_shape": [
+      3,
+      512,
+      960
+    ],
+    "dtype": "float32",
+    "layout": "CHW",
+    "normalization": "qwen3-vl-mean-0.5-std-0.5",
+    "resize_mode": "smart_resize-pad_ceil-bilinear-align_corners",
+    "allocation_bytes_per_slot": 5898240,
+    "pool_size": 2,
+    "prepared": 1,
+    "dropped_no_slot": 0,
+    "production_image_h2d_bytes": 0,
+    "production_image_d2h_bytes": 0,
+    "uses_global_device_synchronize": false
+  },
+  "server": {
+    "skipped": true
+  },
+  "gate": {
+    "status": "component_passed"
+  }
+}

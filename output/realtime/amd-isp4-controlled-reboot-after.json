@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "stage": "after",
+  "status": "passed",
+  "snapshot": {
+    "captured_at": "2026-09-09T20:03:58+08:00",
+    "boot_id": "fca7127b-4422-47b9-968a-25faca5806d5",
+    "uptime_seconds": 162.64,
+    "kernel_release": "6.17.0-1032-oem",
+    "system_state": "running",
+    "module_resolution": "/lib/modules/6.17.0-1032-oem/updates/vlm-camera-pipeline/amd_capture.ko",
+    "persistent_override": "/lib/modules/6.17.0-1032-oem/updates/vlm-camera-pipeline/amd_capture.ko",
+    "persistent_override_sha256": "5a171b50ea6a0bd77c94de8221461dd7c666f5a328dcfe1bd7b1315f044e95f5",
+    "stock_module": "/lib/modules/6.17.0-1032-oem/kernel/drivers/media/platform/amd/isp4/amd_capture.ko.zst",
+    "stock_module_sha256": "dc2db574c764210244c2f7617d435d6800499a06e7867db35113ecca9b8515fa",
+    "loaded_srcversion": "CA94CB23673E748A9ECC5F2",
+    "module_refcount": 0,
+    "camera_device_present": true,
+    "camera_users": [],
+    "module_resolution_matches_override": true
+  },
+  "before_report": "output/realtime/amd-isp4-controlled-reboot-before.json",
+  "before_boot_id": "3cd0b578-c14e-41fd-a862-7d8823e263ea",
+  "kernel_faults": [],
+  "post_reboot_validation": {
+    "gpu_export_probe": "output/realtime/amd-isp4-controlled-reboot-probe.json",
+    "gpu_export_frames": 8,
+    "camera_runtime": "output/realtime/amd-isp4-controlled-reboot-runtime.json",
+    "camera_runtime_frames": 300,
+    "camera_runtime_effective_fps": 29.177931606314427,
+    "integration_metrics": "output/realtime/amd-isp4-controlled-reboot-integration.jsonl",
+    "integration_frames": 354,
+    "integration_effective_fps": 29.452334530781172,
+    "integration_yolo_completion_fps": 29.452334530781172,
+    "integration_vlm_completed": 4
+  },
+  "checks": {
+    "expected_kernel": true,
+    "module_resolution_matches_override": true,
+    "persistent_override_sha256_locked": true,
+    "stock_module_sha256_unchanged": true,
+    "loaded_srcversion_locked": true,
+    "module_unused": true,
+    "camera_device_present": true,
+    "camera_not_in_use": true,
+    "boot_id_changed": true,
+    "boot_uptime_reset": true,
+    "boot_kernel_faults_zero": true,
+    "post_reboot_gpu_export_coherency_passed": true,
+    "post_reboot_camera_runtime_passed": true,
+    "post_reboot_full_integration_passed": true
+  }
+}

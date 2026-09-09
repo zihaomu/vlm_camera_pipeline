@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-09T18:39:14+08:00",
+  "passed": false,
+  "scope": "real V4L2 GPU-export camera ring and NV12-to-RGB HIP path",
+  "checks": {
+    "active_patched_driver": true,
+    "nv12_1280x720_30": true,
+    "all_frames_acquired": true,
+    "frame_ids_consecutive": true,
+    "v4l2_sequences_consecutive": true,
+    "timestamps_monotonic": true,
+    "effective_fps_gte_29": false,
+    "capture_interval_p95_lte_40ms": true,
+    "stable_bounded_clean_pointer_pool": true,
+    "expected_rgb_pitch": true,
+    "expected_rgb_allocation": true,
+    "camera_buffers_requeued": true,
+    "no_clean_slot_drops": true,
+    "no_active_leases": true,
+    "production_image_host_copy_zero": true
+  },
+  "performance": {
+    "frames": 8,
+    "elapsed_seconds": 0.4960150889999113,
+    "effective_fps": 16.128541605720045,
+    "acquire_p50_ms": 33.24979799992889,
+    "acquire_p95_ms": 264.26902100001826,
+    "capture_interval_p50_ms": 33.49,
+    "capture_interval_p95_ms": 34.17
+  },
+  "sequence": {
+    "first": 0,
+    "last": 7,
+    "sample_head": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "sample_tail": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ]
+  },
+  "gpu_pool": {
+    "clean_slot_pointers": {
+      "0": "0x75393cc00000"
+    },
+    "unique_pointers": 1,
+    "rgb_pitches": [
+      3840
+    ],
+    "rgb_allocation_bytes": [
+      2764800
+    ]
+  },
+  "runtime": {
+    "library": "/home/amd/work/vlm_camera_pipeline/.local/zerocopy-gfx1151/lib/libvlm_camera_gpu_capture.so.0.1.0",
+    "library_sha256": "3ddca3c5a27b9e483cb5e38dd84f5a1dac63e03896ff0bebe6f401072b77f31d",
+    "gpu_code_object": "gfx1151",
+    "opencv_version": "5.1.0-dev",
+    "opencv_path": "/home/amd/work/vlm_camera_pipeline/.local/opencv5-gfx1151/python/cv2/__init__.py",
+    "opencv_pointer_factory": true,
+    "isp4_source_commit": "32bed5152a6e284e02c0f803772bc48960f06e32",
+    "isp4_patch_sha256": "dcdb1fb2f3e1c611ab56fc2b8b51ca9e7abd965fbf440b2b128412d25a20b16b",
+    "loaded_module_srcversion": "CA94CB23673E748A9ECC5F2",
+    "expected_patched_module_srcversion": "CA94CB23673E748A9ECC5F2",
+    "active_driver_patched": true,
+    "device": "/dev/video0",
+    "driver": "amd_isp_capture",
+    "card": "amd_isp_capture",
+    "format": "NV12",
+    "width": 1280,
+    "height": 720,
+    "bytes_per_line": 1280,
+    "size_image": 1382400,
+    "fps": [
+      1,
+      30
+    ],
+    "camera_pool_size": 8,
+    "clean_rgb_pool_size": 3,
+    "memory_path": "hipMalloc->HSA-DMA-BUF->V4L2-DMABUF->ISP-PRIME/GART",
+    "color_conversion": "HIP-NV12-to-RGB8-BT.601-limited",
+    "frames_acquired": 8,
+    "frames_requeued": 8,
+    "frames_dropped_no_clean_slot": 0,
+    "active_clean_leases": 0,
+    "image_h2d_bytes": 0,
+    "image_d2h_bytes": 0,
+    "cpu_pixel_objects": false,
+    "global_device_synchronize": false
+  },
+  "production_contract": {
+    "python_pixel_objects": false,
+    "image_h2d_bytes": 0,
+    "image_d2h_bytes": 0,
+    "diagnostic_pixel_readback_bytes": 0
+  }
+}

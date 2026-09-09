@@ -1,0 +1,23 @@
+{
+  "cv2_path": "/home/amd/work/vlm_camera_pipeline/.local/opencv5-gfx1151/python/cv2/__init__.py",
+  "device_count": 1,
+  "expected_prefix": "/home/amd/work/vlm_camera_pipeline/.local/opencv5-gfx1151",
+  "has_cuda_nms": true,
+  "has_from_device_pointer": true,
+  "has_resize_align_corners": true,
+  "kernel_smoke": {
+    "pointer_alias": true,
+    "result_checksum": 24387,
+    "result_shape": [
+      8,
+      8,
+      3
+    ],
+    "source_pointer": 129833166176256,
+    "wrapped_pointer": 129833166176256
+  },
+  "opencv_version": "5.1.0-dev",
+  "passed": true,
+  "python": "/home/amd/work/vlm_camera_pipeline/.venv/bin/python3",
+  "schema_version": 1
+}

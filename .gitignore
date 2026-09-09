@@ -11,7 +11,10 @@ __pycache__/
 .cache/
 .toolchains/
 .local/
+.build/
 build/
+CMakeFiles/
+CMakeCache.txt
 dist/
 third_party/
 native/build*/

@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "component": "hip-egl-present-copy-audit",
+  "status": "passed",
+  "inputs": {
+    "trace": ".build/rocprof-present-performance-hud-v1/trace_results.json",
+    "validation_report": "output/realtime/zerocopy-present-profiled-check.json"
+  },
+  "memory_copy_summary": [
+    {
+      "direction": "H2D",
+      "bytes": 45600,
+      "count": 1,
+      "total_bytes": 45600
+    },
+    {
+      "direction": "H2D",
+      "bytes": 143360,
+      "count": 1,
+      "total_bytes": 143360
+    },
+    {
+      "direction": "H2D",
+      "bytes": 645440,
+      "count": 1,
+      "total_bytes": 645440
+    }
+  ],
+  "classified_ui_control_transfer": {
+    "subtitle_alpha_h2d_bytes": 143360,
+    "subtitle_count": 1,
+    "class_label_atlas_h2d_bytes": 645440,
+    "class_label_atlas_count": 1,
+    "performance_hud_h2d_bytes": 45600,
+    "performance_hud_count": 1
+  },
+  "image_host_copy": {
+    "h2d_bytes": 0,
+    "d2h_bytes": 0
+  },
+  "compositor_kernel_dispatches": {
+    "rgb8_to_rgba_kernel": 20,
+    "detection_boxes_kernel": 20,
+    "subtitle_kernel": 20,
+    "performance_hud_kernel": 20
+  },
+  "hip_device_synchronize_count": 0,
+  "hsa_dmabuf_export_count": 2,
+  "checks": {
+    "validation_passed": true,
+    "only_three_ui_resource_h2d": true,
+    "frame_image_h2d_d2h_zero": true,
+    "all_d2h_zero": true,
+    "non_ui_resource_h2d_zero": true,
+    "rgb_kernel_per_frame": true,
+    "box_kernel_per_frame": true,
+    "subtitle_kernel_per_frame": true,
+    "performance_hud_kernel_per_frame": true,
+    "hip_device_synchronize_absent": true,
+    "two_hsa_dmabuf_exports": true
+  },
+  "notes": [
+    "The only HIP memory-copy activity is one static COCO80 class-label atlas upload, one subtitle glyph-alpha upload, and one performance-HUD glyph upload.",
+    "The frame and detections enter through existing HIP device pointers; present surfaces are HIP allocations exported as DMA-BUF EGLImages.",
+    "Per-slot hipEventSynchronize is an explicit GPU-to-graphics ownership boundary and is not a global device synchronization."
+  ]
+}

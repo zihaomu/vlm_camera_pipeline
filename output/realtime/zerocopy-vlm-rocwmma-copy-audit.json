@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "component": "qwen3-vl-hip-ipc-v2-copy-audit",
+  "status": "passed",
+  "inputs": {
+    "trace": ".build/rocprof-vlm-rocwmma-copy-audit-v1/19298/vlm-rocwmma-copy-audit_results.json",
+    "server_log": "output/realtime/llama-server-zerocopy-rocwmma-profiled.log",
+    "validation_report": "output/realtime/zerocopy-vlm-rocwmma-profiled-check.json",
+    "profiled_semantics_passed": true,
+    "profiled_latency_gate_ignored": true
+  },
+  "request_window": {
+    "starts_at_first_ipc_input_d2d_timestamp": 4000656713055,
+    "copy_records": 22,
+    "summary": [
+      {
+        "operation": 2,
+        "direction": "H2D",
+        "count": 1,
+        "total_bytes": 30720,
+        "sizes": [
+          {
+            "bytes": 30720,
+            "count": 1
+          }
+        ]
+      },
+      {
+        "operation": 3,
+        "direction": "D2H",
+        "count": 20,
+        "total_bytes": 12154880,
+        "sizes": [
+          {
+            "bytes": 607744,
+            "count": 20
+          }
+        ]
+      },
+      {
+        "operation": 4,
+        "direction": "D2D",
+        "count": 1,
+        "total_bytes": 5898240,
+        "sizes": [
+          {
+            "bytes": 5898240,
+            "count": 1
+          }
+        ]
+      }
+    ]
+  },
+  "pointer_ledger_log": {
+    "ipc_input_d2d_bytes": [
+      5898240
+    ],
+    "vision_embedding_ready_bytes": [
+      31457280
+    ],
+    "llm_embedding_d2d_chunks_bytes": [
+      16777216,
+      14680064
+    ],
+    "llm_embedding_bytes_conserved": true
+  },
+  "hip_api_pointer_audit": {
+    "input_copy_log_entries": [
+      {
+        "bytes": 5898240,
+        "source": "0x7a9b6a400000",
+        "destination": "0x7a9b6e800000"
+      }
+    ],
+    "input_copy_matches_hip_api": [
+      true
+    ],
+    "embedding_copy_log_entries": [
+      {
+        "bytes": 16777216,
+        "source": "0x7a9b6fd97800",
+        "destination": "0x7a9b45000000"
+      },
+      {
+        "bytes": 14680064,
+        "source": "0x7a9b70d97800",
+        "destination": "0x7a9b45000000"
+      }
+    ],
+    "embedding_copy_matches_hip_api": [
+      true,
+      true
+    ],
+    "matched": true
+  },
+  "rocwmma_flash_attention": {
+    "build_expected": true,
+    "runtime_kernel_dispatches": 144,
+    "runtime_verified": true,
+    "kernel_prefix": "void flash_attn_ext_f16<"
+  },
+  "classified_control_plane": {
+    "vision_position_h2d": {
+      "count": 1,
+      "bytes_each": 30720,
+      "total_bytes": 30720,
+      "derivation": "1920 vision patches * 4 int32 position components"
+    },
+    "token_sampling_logits_d2h": {
+      "count": 20,
+      "bytes_each": 607744,
+      "total_bytes": 12154880,
+      "derivation": "151936 vocabulary logits * float32 per sampled token"
+    }
+  },
+  "image_derived_host_copy": {
+    "h2d_bytes": 0,
+    "d2h_bytes": 0,
+    "qwen3_vl_embedding_d2h_count": 0,
+    "qwen3_vl_embedding_bytes": 31457280
+  },
+  "notes": [
+    "rocprofv3 records the IPC input copy as D2D.",
+    "HIP API trace matches every logged input and embedding D2D by source pointer, destination pointer, byte count, and DeviceToDevice kind.",
+    "This rocprofv3 build does not emit memory_copy activity records for the same-device internal ggml embedding copies, so their API records and byte conservation are audited explicitly.",
+    "Vision position metadata and token-sampling logits are classified control-plane transfers, not image pixels or vision embeddings.",
+    "On RDNA3, flash_attn_ext_f16 dispatches are the rocWMMA FlashAttention path selected by GGML_HIP_ROCWMMA_FATTN.",
+    "Profiler overhead and generated-caption length can miss the 3-second cadence; cadence is validated separately without rocprof instrumentation."
+  ]
+}

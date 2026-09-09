@@ -21,6 +21,9 @@ EXPECTED_YOLO26X_ONNX_SHA256 = (
     "88568299de91d4967f239a062c9f1619f695ebd05de73cd66b8f589591aaeb0a"
 )
 EXPECTED_ULTRALYTICS_COMMIT = "34e213ca3ece4c18962f5bb922ec74da0c474d24"
+EXPECTED_ULTRALYTICS_PATCH_SHA256 = (
+    "580502ff7b83c8131e3cc963c8e153dd8082915551361c149c72e3291477522e"
+)
 MIGRAPHX_PROVIDER = "MIGraphXExecutionProvider"
 
 
@@ -46,6 +49,30 @@ def _git_revision(repository: Path) -> str:
     except (OSError, subprocess.SubprocessError):
         return "unknown"
     return result.stdout.strip()
+
+
+def _git_patch_sha256(repository: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--binary", "HEAD", "--"],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            timeout=5,
+        )
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if untracked.stdout.strip():
+        return "untracked-files-present"
+    return hashlib.sha256(result.stdout).hexdigest()
 
 
 def _native_package_version(package: str) -> str:
@@ -176,6 +203,8 @@ class MIGraphXCameraDetector:
         except (IndexError, ValueError) as exc:
             raise ValueError(f"invalid GPU device: {device!r}") from exc
 
+        os.environ["ULTRALYTICS_MIGRAPHX_STRICT"] = "1"
+
         import onnxruntime as ort
         import torch
         import ultralytics
@@ -215,6 +244,13 @@ class MIGraphXCameraDetector:
                 "unexpected local Ultralytics revision: "
                 f"expected {EXPECTED_ULTRALYTICS_COMMIT}, got {self.ultralytics_commit}"
             )
+        self.ultralytics_patch_sha256 = _git_patch_sha256(self.ultralytics_repository)
+        if self.ultralytics_patch_sha256 != EXPECTED_ULTRALYTICS_PATCH_SHA256:
+            raise MIGraphXBackendError(
+                "Ultralytics strict I/O Binding patch mismatch: "
+                f"expected {EXPECTED_ULTRALYTICS_PATCH_SHA256}, "
+                f"got {self.ultralytics_patch_sha256}"
+            )
         self.device = device
         self.device_id = device_id
         self.image_size = image_size
@@ -239,6 +275,7 @@ class MIGraphXCameraDetector:
             "ultralytics": ultralytics.__version__,
             "ultralytics_branch": "add-onnx-migraphx-backend",
             "ultralytics_commit": self.ultralytics_commit,
+            "ultralytics_patch_sha256": self.ultralytics_patch_sha256,
             "provider": MIGRAPHX_PROVIDER,
             "migraphx_fp16": True,
             "input_shape": self.contract["input_shape"],
@@ -281,17 +318,41 @@ class MIGraphXCameraDetector:
             raise MIGraphXBackendError(
                 f"unexpected ORT I/O shapes: {input_info.shape} -> {output_info.shape}"
             )
-        zeros = np.zeros((1, 3, 640, 640), dtype=np.float32)
+        input_tensor = self._torch.zeros(
+            (1, 3, 640, 640), dtype=self._torch.float32, device=self.device
+        )
+        output_tensor = self._torch.empty(
+            (1, 300, 6), dtype=self._torch.float32, device=self.device
+        )
+        io_binding = session.io_binding()
+        io_binding.bind_input(
+            name=input_info.name,
+            device_type="cuda",
+            device_id=self.device_id,
+            element_type=np.float32,
+            shape=tuple(input_tensor.shape),
+            buffer_ptr=input_tensor.data_ptr(),
+        )
+        io_binding.bind_output(
+            name=output_info.name,
+            device_type="cuda",
+            device_id=self.device_id,
+            element_type=np.float32,
+            shape=tuple(output_tensor.shape),
+            buffer_ptr=output_tensor.data_ptr(),
+        )
+        self._torch.cuda.synchronize(self.device_id)
         started = time.perf_counter()
-        output = session.run([output_info.name], {input_info.name: zeros})[0]
+        session.run_with_iobinding(io_binding)
+        self._torch.cuda.synchronize(self.device_id)
         self._strict_first_run_ms = (time.perf_counter() - started) * 1000.0
-        if output.shape != (1, 300, 6):
-            raise MIGraphXBackendError(f"unexpected strict preflight output: {output.shape}")
+        if tuple(output_tensor.shape) != (1, 300, 6):
+            raise MIGraphXBackendError(f"unexpected strict preflight output: {output_tensor.shape}")
         provider_options = session.get_provider_options().get(MIGRAPHX_PROVIDER, {})
         if provider_options.get("migraphx_fp16_enable") != "1":
             raise MIGraphXBackendError("MIGraphX provider did not enable FP16")
         self._strict_preflight_complete = True
-        del output, session
+        del input_tensor, output_tensor, io_binding, session
 
     def _verify_ultralytics_backend(self) -> None:
         predictor = getattr(self._model, "predictor", None)
@@ -299,13 +360,27 @@ class MIGraphXCameraDetector:
         backend = getattr(auto_backend, "backend", None)
         if getattr(auto_backend, "format", None) != "onnx" or backend is None:
             raise MIGraphXBackendError("Ultralytics did not construct its ONNX backend")
-        if getattr(backend, "provider", None) != MIGRAPHX_PROVIDER:
+        providers = list(getattr(backend, "providers", []))
+        if not providers or providers[0] != MIGRAPHX_PROVIDER:
             raise MIGraphXBackendError(
                 "Ultralytics did not select MIGraphX first: "
-                f"{getattr(backend, 'providers', None)}"
+                f"{providers}"
             )
+        if not getattr(backend, "migraphx_strict", False):
+            raise MIGraphXBackendError("Ultralytics strict MIGraphX mode is disabled")
+        session_options = backend.session.get_session_options()
+        if (
+            session_options.get_session_config_entry("session.disable_cpu_ep_fallback")
+            != "1"
+        ):
+            raise MIGraphXBackendError("actual Ultralytics session allows CPU EP fallback")
         if not getattr(backend, "migraphx_fp16", False):
             raise MIGraphXBackendError("Ultralytics MIGraphX FP16 flag is disabled")
+        if not getattr(backend, "use_io_binding", False):
+            raise MIGraphXBackendError("Ultralytics MIGraphX GPU I/O Binding is disabled")
+        bindings = list(getattr(backend, "bindings", []))
+        if not bindings or any(not tensor.is_cuda for tensor in bindings):
+            raise MIGraphXBackendError("Ultralytics output bindings are not GPU tensors")
         if not getattr(auto_backend, "end2end", False):
             raise MIGraphXBackendError("Ultralytics lost the YOLO26 end2end metadata")
         self._backend = backend
@@ -394,6 +469,10 @@ class MIGraphXCameraDetector:
             "providers": list(getattr(backend, "providers", [])),
             "provider_options": dict(provider_options),
             "cpu_ep_fallback_disabled": True,
+            "cpu_ep_registered_by_ort": bool(
+                backend is not None
+                and "CPUExecutionProvider" in getattr(backend, "providers", [])
+            ),
             "strict_preflight_passed": self._strict_preflight_complete,
             "strict_session_seconds": _optional_float(self._strict_session_seconds),
             "strict_first_run_ms": _optional_float(self._strict_first_run_ms),
@@ -411,6 +490,7 @@ class MIGraphXCameraDetector:
             "cache_files": cache_files,
             "ultralytics_branch": "add-onnx-migraphx-backend",
             "ultralytics_commit": self.ultralytics_commit,
+            "ultralytics_patch_sha256": self.ultralytics_patch_sha256,
             "onnxruntime": self._ort.__version__,
         }
 

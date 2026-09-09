@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-09T20:04:47+08:00",
+  "status": "patch_built_installed_and_active_runtime_validation_external",
+  "passed": true,
+  "runtime_camera_validated": false,
+  "system_install_modified": true,
+  "checker_modified_running_module": false,
+  "source": {
+    "repository": "https://git.launchpad.net/ubuntu/+source/linux-oem-6.17",
+    "commit": "32bed5152a6e284e02c0f803772bc48960f06e32",
+    "checkout": "third_party/linux-oem-6.17-amd-isp4",
+    "tracked_changes": [
+      " M drivers/media/platform/amd/isp4/isp4_interface.c",
+      " M drivers/media/platform/amd/isp4/isp4_video.c"
+    ],
+    "diff_sha256": "dcdb1fb2f3e1c611ab56fc2b8b51ca9e7abd965fbf440b2b128412d25a20b16b"
+  },
+  "patch": {
+    "path": "patches/linux-oem-6.17-amd-isp4-dmabuf-import.patch",
+    "sha256": "dcdb1fb2f3e1c611ab56fc2b8b51ca9e7abd965fbf440b2b128412d25a20b16b",
+    "fixes": [
+      "treat foreign dma_buf private data as opaque",
+      "import and pin foreign dma_buf through amdgpu PRIME for ISP GART address",
+      "avoid CPU vmap and use an opaque completion cookie for GPU dma-bufs",
+      "release imported BO on unmap and defensive detach",
+      "publish V4L2 and firmware queue nodes before asynchronous completion"
+    ]
+  },
+  "build": {
+    "kernel_release": "6.17.0-1032-oem",
+    "kernel_build_dir": "/lib/modules/6.17.0-1032-oem/build",
+    "module": "third_party/linux-oem-6.17-amd-isp4/drivers/media/platform/amd/isp4/amd_capture.ko",
+    "module_size_bytes": 2244216,
+    "module_sha256": "5a171b50ea6a0bd77c94de8221461dd7c666f5a328dcfe1bd7b1315f044e95f5",
+    "module_name": "amd_capture",
+    "srcversion": "CA94CB23673E748A9ECC5F2",
+    "vermagic": "6.17.0-1032-oem SMP preempt mod_unload modversions"
+  },
+  "running_system": {
+    "installed_module": "/lib/modules/6.17.0-1032-oem/updates/vlm-camera-pipeline/amd_capture.ko",
+    "installed_module_sha256": "5a171b50ea6a0bd77c94de8221461dd7c666f5a328dcfe1bd7b1315f044e95f5",
+    "installed_srcversion": "CA94CB23673E748A9ECC5F2",
+    "persistent_override": "/lib/modules/6.17.0-1032-oem/updates/vlm-camera-pipeline/amd_capture.ko",
+    "persistent_override_installed": true,
+    "loaded_srcversion": "CA94CB23673E748A9ECC5F2",
+    "active_module_matches_build": true,
+    "camera_processes": []
+  },
+  "checks": {
+    "patch_sha256_locked": true,
+    "source_commit_locked": true,
+    "source_matches_patch": true,
+    "no_extra_tracked_source_changes": true,
+    "module_built": true,
+    "module_name": true,
+    "module_matches_running_kernel": true,
+    "loaded_module_identity_recognized": true
+  },
+  "remaining": [
+    "runtime camera validation is recorded by the separate camera reports"
+  ]
+}

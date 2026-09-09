@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "component": "hip-opengl-egl-present",
+  "status": "passed",
+  "gpu": {
+    "name": "AMD Radeon Graphics",
+    "architecture": "gfx1151",
+    "device": 0
+  },
+  "graphics": {
+    "backend": "HIP-exported-DMA-BUF/EGLImage/OpenGL/X11-or-XWayland",
+    "vendor": "AMD",
+    "renderer": "AMD Radeon Graphics (radeonsi, gfx1151, LLVM 20.1.2, DRM 3.64, 6.17.0-1032-oem)",
+    "version": "4.6 (Core Profile) Mesa 25.2.8-0ubuntu0.24.04.2",
+    "interop_device_proof": "hsa_amd_portable_export_dmabuf + EGL_EXT_image_dma_buf_import",
+    "window_visible": false,
+    "initial_window_size": [
+      640,
+      360
+    ],
+    "expected_initial_window_size": [
+      640,
+      360
+    ],
+    "aspect_preserving_resize": true,
+    "fullscreen_key": "F11",
+    "close_keys": [
+      "Escape",
+      "WM_DELETE_WINDOW"
+    ]
+  },
+  "data_path": {
+    "source": "HIP device RGB8 pointer",
+    "frame_size": [
+      1280,
+      720
+    ],
+    "detections": "HIP device float32 [N,6] pointer",
+    "present_pool_size": 2,
+    "hip_exported_dmabuf_egl_images": 2,
+    "frame_host_pointer_api": false,
+    "frame_h2d_bytes": 0,
+    "frame_d2h_bytes": 0,
+    "framebuffer_readback": false,
+    "global_hip_synchronize": false,
+    "subtitle_updates": 1,
+    "subtitle_h2d_bytes": 143360,
+    "subtitle_transfer_class": "UI glyph alpha resource on caption change",
+    "class_label_count": 80,
+    "class_label_size": [
+      224,
+      36
+    ],
+    "class_label_h2d_bytes": 645440,
+    "class_label_transfer_class": "static COCO80 UI glyph atlas at startup",
+    "class_label_mode": "COCO80 startup atlas; GPU box/label compositor",
+    "box_palette": "20 vivid class colors, indexed by class ID",
+    "window_title": "Zero-copy HIP/EGL presenter probe",
+    "performance_hud_updates": 1,
+    "performance_hud_h2d_bytes": 45600,
+    "performance_hud_size": [
+      600,
+      76
+    ],
+    "performance_hud_visible": true,
+    "performance_hud_mode": "two-line GPU compositor; H toggles visibility",
+    "performance_hud_toggle_key": "H",
+    "font_path": "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+  },
+  "performance": {
+    "requested_frames": 20,
+    "frames_presented": 20,
+    "elapsed_seconds_including_setup": 0.08002223099992989,
+    "loop_elapsed_seconds": 0.008907272000215016,
+    "target_fps": 0.0,
+    "effective_present_fps": 2245.356378419477,
+    "present_capacity_fps": 2261.708895552984,
+    "present_call_p50_ms": 0.11788999995587801,
+    "present_call_p95_ms": 0.3948359999412787
+  },
+  "build": {
+    "library": "/home/amd/work/vlm_camera_pipeline/.local/egl-present-gfx1151/lib/libvlm_camera_egl_present.so.0.1.0",
+    "library_sha256": "6ea7d9217fe9a7aeece7eb12b33f14604c153f910bde79042255bace633acd19",
+    "gpu_arch": "gfx1151"
+  },
+  "checks": {
+    "all_frames_presented": true,
+    "two_slot_pool": true,
+    "window_scale_applied": true,
+    "hardware_renderer": true,
+    "subtitle_uploaded_once": true,
+    "coco80_class_labels_ready": true,
+    "ascii_english_window_title": true,
+    "performance_hud_uploaded_once": true,
+    "performance_hud_visible": true,
+    "zero_host_frame_copy_contract": true,
+    "at_least_30_present_calls_per_second": true,
+    "paced_fps_met": true
+  }
+}
