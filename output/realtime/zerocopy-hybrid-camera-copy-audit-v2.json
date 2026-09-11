@@ -1,0 +1,241 @@
+{
+  "schema_version": 1,
+  "component": "real-camera-yolo-vlm-egl-copy-audit",
+  "status": "passed",
+  "scope": "steady-state image path after first camera/VLM request; model-load transfers are outside the audited hot windows",
+  "inputs": {
+    "parent_trace": ".build/rocprof-hybrid-camera-integration-v3/39575/hybrid-camera-integration-v3_results.json",
+    "parent_trace_sha256": "4af3851d1b083384237190c548ca380a730267feaf001214a976768824d4fed8",
+    "parent_pid": 39575,
+    "server_trace": ".build/rocprof-hybrid-camera-integration-v3/39930/hybrid-camera-integration-v3_results.json",
+    "server_trace_sha256": "7951b2a35f0e3748edba90db0961ab3b5912d08aa7767e82dfb665aa5f1295b8",
+    "server_pid": 39930,
+    "metrics": "output/realtime/metrics-yolo-vlm-hybrid-profiled-v3.jsonl",
+    "server_log": "output/realtime/llama-server-hybrid-profiled-v3.log"
+  },
+  "runtime": {
+    "completed": true,
+    "short_runtime_passed": true,
+    "all_runtime_checks_passed": true,
+    "camera_start_attempts": 1,
+    "camera_allocation_bytes": 4194304,
+    "frames": 175,
+    "effective_fps": 29.133118104056532,
+    "yolo_completed": 175,
+    "vlm_completed": 2,
+    "presenter_library": ".local/egl-present-gfx1151/lib/libvlm_camera_egl_present.so.0.1.0",
+    "presenter_library_sha256": "6ea7d9217fe9a7aeece7eb12b33f14604c153f910bde79042255bace633acd19",
+    "presenter_binary_identity_match": true
+  },
+  "parent_camera_yolo_present": {
+    "passed": true,
+    "hot_window_start_timestamp": 57617066365376,
+    "memory_copy_summary": [
+      {
+        "direction": "H2D",
+        "bytes": 143360,
+        "count": 2,
+        "total_bytes": 286720
+      }
+    ],
+    "classified_ui_control": {
+      "class_label_atlas_upload_before_hot_window": 1,
+      "class_label_atlas_bytes": 645440,
+      "initial_performance_hud_upload_before_hot_window": 1,
+      "hot_performance_hud_uploads": 0,
+      "performance_hud_bytes_each": 45600,
+      "initial_caption_upload_before_hot_window": 1,
+      "hot_caption_uploads": 2,
+      "bytes_each": 143360,
+      "hybrid_metadata_d2h": {
+        "bytes_each": 260,
+        "activity_count": 0,
+        "pointer_ledger_count": 2,
+        "device_pointers": [
+          "0x7db4c0ffe000",
+          "0x7db4c0fff000"
+        ],
+        "host_pointers": [
+          "0x7db7c1210000",
+          "0x7db7c6402000"
+        ]
+      }
+    },
+    "unclassified_hot_host_copy_count": 0,
+    "hip_api_unclassified_host_copy_count": 0,
+    "yolo_output_d2d": {
+      "bytes_each": 7200,
+      "count": 175
+    },
+    "hybrid_event_ledger": {
+      "vlm_prepared": 2,
+      "hybrid_requests": 2,
+      "base_ready_record_count": 2,
+      "base_ready_wait_count": 2,
+      "final_ready_record_count": 2,
+      "control_ready_record_count": 2,
+      "control_ready_sync_count": 2
+    },
+    "kernel_dispatches": {
+      "detection_boxes_kernel": 174,
+      "hybrid_compact_hints_kernel": 2,
+      "hybrid_numbered_boxes_kernel": 2,
+      "letterbox_rgb8_to_bchw_f32_kernel": 175,
+      "nv12_to_rgb8_bt601_limited_kernel": 175,
+      "qwen3_vl_preprocess_rgb8_f32_kernel": 2,
+      "rgb8_to_rgba_kernel": 175,
+      "subtitle_kernel": 175,
+      "unletterbox_detections_kernel": 175
+    },
+    "hip_device_synchronize_count": 0,
+    "hsa_dmabuf_export_count": 10,
+    "expected_hsa_dmabuf_export_count": 10,
+    "checks": {
+      "hot_memory_copy_only_classified_control": true,
+      "hot_memory_activity_d2h_has_no_unclassified_transfer": true,
+      "hot_unclassified_host_copy_zero": true,
+      "hip_api_unclassified_host_copy_zero": true,
+      "hybrid_metadata_pointer_ledger_matches": true,
+      "yolo_output_d2d_per_run": true,
+      "camera_nv12_kernel_per_frame": true,
+      "yolo_letterbox_kernel_per_frame": true,
+      "yolo_unletterbox_kernel_per_run": true,
+      "vlm_preprocess_kernel_per_request": true,
+      "hybrid_topk_kernel_per_request": true,
+      "hybrid_overlay_kernel_per_request": true,
+      "vlm_base_ready_event_record_per_request": true,
+      "vlm_final_ready_event_record_per_request": true,
+      "hybrid_waits_base_ready_event_per_request": true,
+      "hybrid_control_event_record_per_request": true,
+      "hybrid_control_event_sync_per_request": true,
+      "present_rgb_kernel_per_frame": true,
+      "present_subtitle_kernel_per_frame": true,
+      "present_performance_hud_kernel_expected": true,
+      "present_box_kernel_bounded": true,
+      "hip_device_synchronize_absent": true,
+      "camera_and_presenter_hsa_exports_exact": true,
+      "camera_export_allocation_is_dedicated": true
+    }
+  },
+  "server_vlm": {
+    "passed": true,
+    "hot_window_start_timestamp": 57617164936160,
+    "memory_copy_summary": [
+      {
+        "direction": "H2D",
+        "bytes": 30720,
+        "count": 2,
+        "total_bytes": 61440
+      },
+      {
+        "direction": "D2H",
+        "bytes": 607744,
+        "count": 34,
+        "total_bytes": 20663296
+      },
+      {
+        "direction": "D2D",
+        "bytes": 5898240,
+        "count": 2,
+        "total_bytes": 11796480
+      }
+    ],
+    "classified_control_plane": {
+      "vision_position_h2d": {
+        "bytes_each": 30720,
+        "count": 2
+      },
+      "token_sampling_logits_d2h": {
+        "bytes_each": 607744,
+        "count": 34
+      }
+    },
+    "image_and_embedding_host_copy": {
+      "h2d_bytes": 0,
+      "d2h_bytes": 0,
+      "qwen3_vl_embedding_d2h_count": 0
+    },
+    "prompt_cache": {
+      "configured_ram_mib": 0,
+      "kv_checkpoint_d2h_bytes_each": 1087488,
+      "kv_checkpoint_d2h_count": 0,
+      "checkpoint_log_markers": []
+    },
+    "pointer_ledger": {
+      "ipc_input_entries": [
+        {
+          "bytes": 5898240,
+          "source": "0x7f266c800000",
+          "destination": "0x7f2670800000"
+        },
+        {
+          "bytes": 5898240,
+          "source": "0x7f266c800000",
+          "destination": "0x7f2670800000"
+        }
+      ],
+      "ipc_input_matches_hip_api": true,
+      "embedding_entries": [
+        {
+          "bytes": 16777216,
+          "source": "0x7f2671d97800",
+          "destination": "0x7f2648000000"
+        },
+        {
+          "bytes": 14680064,
+          "source": "0x7f2672d97800",
+          "destination": "0x7f2648000000"
+        },
+        {
+          "bytes": 16777216,
+          "source": "0x7f2671d97800",
+          "destination": "0x7f2648000000"
+        },
+        {
+          "bytes": 14680064,
+          "source": "0x7f2672d97800",
+          "destination": "0x7f2648000000"
+        }
+      ],
+      "embedding_matches_hip_api": true,
+      "embedding_ready_bytes": [
+        31457280,
+        31457280
+      ]
+    },
+    "checks": {
+      "ipc_input_d2d_per_request": true,
+      "vision_position_h2d_per_request": true,
+      "token_logits_d2h_present": true,
+      "unclassified_host_copy_zero": true,
+      "image_embedding_d2h_zero": true,
+      "prompt_cache_kv_checkpoint_d2h_zero": true,
+      "prompt_cache_disabled_in_log": true,
+      "prompt_cache_checkpoint_log_zero": true,
+      "input_pointer_ledger_matches_hip_api": true,
+      "embedding_pointer_ledger_matches_hip_api": true,
+      "device_embedding_bytes_conserved": true
+    }
+  },
+  "production_contract": {
+    "image_h2d_bytes": 0,
+    "image_d2h_bytes": 0,
+    "vision_embedding_d2h_bytes": 0,
+    "global_device_synchronize_count": 0,
+    "allowed_host_transfers": [
+      "static COCO80 class-label glyph atlas (startup H2D)",
+      "performance HUD glyph mask (startup/change H2D when enabled)",
+      "subtitle glyph alpha control resource (H2D)",
+      "Hybrid top-8 detection summary (one 260-byte D2H per request)",
+      "VLM vision position metadata (H2D)",
+      "VLM token sampling logits (D2H)"
+    ]
+  },
+  "notes": [
+    "Camera frames remain in HIP-owned DMA-BUFs imported by V4L2 and ISP PRIME/GART.",
+    "YOLO input/output, VLM image preprocessing, and VLM embeddings remain device-resident.",
+    "Hybrid reads back only a pointer-audited fixed 260-byte detection summary; full [300,6] output remains on the GPU.",
+    "The prompt RAM cache is disabled because changing camera prompts caused avoidable KV checkpoint D2H traffic.",
+    "Class-label, performance-HUD and caption glyphs, position metadata, and sampling logits are control-plane resources, not image payloads."
+  ]
+}

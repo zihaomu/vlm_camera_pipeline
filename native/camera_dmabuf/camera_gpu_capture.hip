@@ -110,6 +110,14 @@ struct CleanSlot {
     bool in_use = false;
 };
 
+struct WebStreamSlot {
+    void *device_pointer = nullptr;
+    std::size_t allocation_bytes = 0;
+    int dmabuf_fd = -1;
+    std::uint64_t generation = 0;
+    bool in_use = false;
+};
+
 __device__ std::uint8_t clamp_u8(int value) {
     return static_cast<std::uint8_t>(max(0, min(255, value)));
 }
@@ -122,17 +130,19 @@ __global__ void nv12_to_rgb8_bt601_limited_kernel(
     int width,
     int height,
     std::uint8_t *destination,
-    std::size_t destination_pitch) {
+    std::size_t destination_pitch,
+    int horizontal_flip) {
     const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
     const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
     if (x >= width || y >= height) {
         return;
     }
+    const int source_x = horizontal_flip != 0 ? width - 1 - x : x;
     const auto *y_row = source + static_cast<std::size_t>(y) * source_y_pitch;
     const auto *uv_row = source + source_uv_offset +
         static_cast<std::size_t>(y / 2) * source_uv_pitch;
-    const int uv_x = (x / 2) * 2;
-    const int c = max(0, static_cast<int>(y_row[x]) - 16);
+    const int uv_x = (source_x / 2) * 2;
+    const int c = max(0, static_cast<int>(y_row[source_x]) - 16);
     const int d = static_cast<int>(uv_row[uv_x]) - 128;
     const int e = static_cast<int>(uv_row[uv_x + 1]) - 128;
     const int red = (298 * c + 409 * e + 128) >> 8;
@@ -145,6 +155,85 @@ __global__ void nv12_to_rgb8_bt601_limited_kernel(
     pixel[2] = clamp_u8(blue);
 }
 
+// VAAPI on this AMD stack accepts linear DMA-BUFs as packed YUYV, then its VPP
+// stage converts them to the native tiled NV12 surfaces required by vah264enc.
+// Packing here keeps the complete camera-to-encoder pixel path on the GPU.
+__global__ void nv12_to_yuyv_kernel(
+    const std::uint8_t *source,
+    std::size_t source_y_pitch,
+    std::size_t source_uv_offset,
+    std::size_t source_uv_pitch,
+    int width,
+    int height,
+    std::uint8_t *destination,
+    std::size_t destination_pitch,
+    int horizontal_flip) {
+    const int pair_x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+    const int x = pair_x * 2;
+    if (x >= width || y >= height) {
+        return;
+    }
+    const auto *y_row = source + static_cast<std::size_t>(y) * source_y_pitch;
+    const auto *uv_row = source + source_uv_offset +
+        static_cast<std::size_t>(y / 2) * source_uv_pitch;
+    const int source_pair_x = horizontal_flip != 0 ? width - 2 - x : x;
+    auto *packed = destination + static_cast<std::size_t>(y) * destination_pitch +
+        static_cast<std::size_t>(x) * 2;
+    packed[0] = y_row[source_pair_x + (horizontal_flip != 0 ? 1 : 0)];
+    packed[1] = uv_row[source_pair_x];
+    packed[2] = y_row[source_pair_x + (horizontal_flip != 0 ? 0 : 1)];
+    packed[3] = uv_row[source_pair_x + 1];
+}
+
+int launch_nv12_to_yuyv(
+    const void *source_nv12,
+    std::size_t source_y_pitch,
+    std::size_t source_uv_offset,
+    std::size_t source_uv_pitch,
+    int width,
+    int height,
+    void *destination_yuyv,
+    std::size_t destination_pitch,
+    int horizontal_flip,
+    void *stream_pointer) {
+    if (source_nv12 == nullptr || destination_yuyv == nullptr || width <= 0 || height <= 0 ||
+        (width & 1) != 0 || (height & 1) != 0 ||
+        source_y_pitch < static_cast<std::size_t>(width) ||
+        source_uv_pitch < static_cast<std::size_t>(width) ||
+        source_uv_offset < source_y_pitch * static_cast<std::size_t>(height) ||
+        destination_pitch < static_cast<std::size_t>(width) * 2 ||
+        (horizontal_flip != 0 && horizontal_flip != 1)) {
+        set_error("NV12 to YUYV", "invalid device pointers, dimensions, pitch, or plane offset");
+        return 1;
+    }
+    const dim3 block(16, 16);
+    const dim3 grid(
+        (static_cast<unsigned int>(width / 2) + block.x - 1) / block.x,
+        (static_cast<unsigned int>(height) + block.y - 1) / block.y);
+    hipLaunchKernelGGL(
+        nv12_to_yuyv_kernel,
+        grid,
+        block,
+        0,
+        reinterpret_cast<hipStream_t>(stream_pointer),
+        static_cast<const std::uint8_t *>(source_nv12),
+        source_y_pitch,
+        source_uv_offset,
+        source_uv_pitch,
+        width,
+        height,
+        static_cast<std::uint8_t *>(destination_yuyv),
+        destination_pitch,
+        horizontal_flip);
+    const hipError_t launch_status = hipGetLastError();
+    if (launch_status != hipSuccess) {
+        set_hip_error("NV12 to YUYV kernel", launch_status);
+        return 2;
+    }
+    return 0;
+}
+
 int launch_nv12_to_rgb8(
     const void *source_nv12,
     std::size_t source_y_pitch,
@@ -154,6 +243,7 @@ int launch_nv12_to_rgb8(
     int height,
     void *destination_rgb8,
     std::size_t destination_pitch,
+    int horizontal_flip,
     void *source_ready_event,
     void *stream_pointer) {
     if (source_nv12 == nullptr || destination_rgb8 == nullptr || width <= 0 || height <= 0 ||
@@ -161,7 +251,8 @@ int launch_nv12_to_rgb8(
         source_y_pitch < static_cast<std::size_t>(width) ||
         source_uv_pitch < static_cast<std::size_t>(width) ||
         source_uv_offset < source_y_pitch * static_cast<std::size_t>(height) ||
-        destination_pitch < static_cast<std::size_t>(width) * 3) {
+        destination_pitch < static_cast<std::size_t>(width) * 3 ||
+        (horizontal_flip != 0 && horizontal_flip != 1)) {
         set_error("NV12 to RGB8", "invalid device pointers, dimensions, pitch, or plane offset");
         return 1;
     }
@@ -191,7 +282,8 @@ int launch_nv12_to_rgb8(
         width,
         height,
         static_cast<std::uint8_t *>(destination_rgb8),
-        destination_pitch);
+        destination_pitch,
+        horizontal_flip);
     const hipError_t launch_status = hipGetLastError();
     if (launch_status != hipSuccess) {
         set_hip_error("NV12 to RGB8 kernel", launch_status);
@@ -208,6 +300,7 @@ struct vlm_camera_gpu_capture {
     bool streaming = false;
     bool hsa_initialized = false;
     int hip_device = 0;
+    bool horizontal_flip = false;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
     std::uint32_t fourcc = 0;
@@ -219,10 +312,15 @@ struct vlm_camera_gpu_capture {
     std::uint64_t frames_acquired = 0;
     std::uint64_t frames_requeued = 0;
     std::uint64_t frames_dropped_no_clean_slot = 0;
+    std::uint64_t web_stream_frames_converted = 0;
+    std::uint64_t web_stream_frames_released = 0;
+    std::uint64_t web_stream_frames_dropped_no_slot = 0;
+    std::uint64_t web_stream_gpu_bytes_written = 0;
     std::string driver;
     std::string card;
     std::vector<CameraBuffer> camera_buffers;
     std::vector<CleanSlot> clean_slots;
+    std::vector<WebStreamSlot> web_stream_slots;
     hipStream_t ingest_stream = nullptr;
     bool v4l2_buffers_requested = false;
 };
@@ -283,6 +381,16 @@ void destroy_capture(vlm_camera_gpu_capture *capture) noexcept {
             slot.device_pointer = nullptr;
         }
     }
+    for (WebStreamSlot &slot : capture->web_stream_slots) {
+        if (slot.dmabuf_fd >= 0) {
+            close(slot.dmabuf_fd);
+            slot.dmabuf_fd = -1;
+        }
+        if (slot.device_pointer != nullptr) {
+            static_cast<void>(hipFree(slot.device_pointer));
+            slot.device_pointer = nullptr;
+        }
+    }
     if (capture->ingest_stream != nullptr) {
         static_cast<void>(hipStreamDestroy(capture->ingest_stream));
         capture->ingest_stream = nullptr;
@@ -308,6 +416,7 @@ void initialize_capture(
         throw std::runtime_error("strict capture currently requires one ROCm GPU at device 0");
     }
     capture->hip_device = options.hip_device;
+    capture->horizontal_flip = options.horizontal_flip != 0;
     capture->fd = open(options.device, O_RDWR | O_NONBLOCK | O_CLOEXEC);
     if (capture->fd < 0) {
         throw std::runtime_error(
@@ -428,6 +537,41 @@ void initialize_capture(
         capture->camera_buffers.push_back(buffer);
     }
 
+    const std::size_t web_stream_pitch = static_cast<std::size_t>(capture->width) * 2;
+    const std::size_t web_stream_size = web_stream_pitch * capture->height;
+    const std::size_t web_stream_allocation_bytes = std::max(
+        page_align(web_stream_size),
+        kCameraExportAllocationFloor);
+    capture->web_stream_slots.reserve(options.web_stream_buffers);
+    for (std::uint32_t index = 0; index < options.web_stream_buffers; ++index) {
+        WebStreamSlot slot;
+        slot.allocation_bytes = web_stream_allocation_bytes;
+        hip_check(
+            hipMalloc(&slot.device_pointer, slot.allocation_bytes),
+            "hipMalloc(web stream YUYV DMA-BUF)");
+        int exported_fd = -1;
+        std::uint64_t export_offset = 0;
+        hsa_status = hsa_amd_portable_export_dmabuf(
+            slot.device_pointer,
+            slot.allocation_bytes,
+            &exported_fd,
+            &export_offset);
+        if (hsa_status != HSA_STATUS_SUCCESS || exported_fd < 0 || export_offset != 0) {
+            if (exported_fd >= 0) {
+                close(exported_fd);
+            }
+            static_cast<void>(hipFree(slot.device_pointer));
+            slot.device_pointer = nullptr;
+            throw std::runtime_error(
+                "HSA web stream DMA-BUF export failed: " + hsa_error(hsa_status) +
+                ", fd=" + std::to_string(exported_fd) +
+                ", offset=" + std::to_string(export_offset));
+        }
+        slot.dmabuf_fd = exported_fd;
+        static_cast<void>(fcntl(exported_fd, F_SETFD, FD_CLOEXEC));
+        capture->web_stream_slots.push_back(slot);
+    }
+
     const std::size_t rgb_pitch = static_cast<std::size_t>(capture->width) * 3;
     const std::size_t rgb_bytes = rgb_pitch * capture->height;
     capture->clean_slots.reserve(options.clean_rgb_buffers);
@@ -472,6 +616,7 @@ extern "C" int vlm_camera_nv12_to_rgb8(
     int height,
     void *destination_rgb8,
     std::size_t destination_pitch,
+    int horizontal_flip,
     void *source_ready_event,
     void *stream) {
     return launch_nv12_to_rgb8(
@@ -483,7 +628,32 @@ extern "C" int vlm_camera_nv12_to_rgb8(
         height,
         destination_rgb8,
         destination_pitch,
+        horizontal_flip,
         source_ready_event,
+        stream);
+}
+
+extern "C" int vlm_camera_nv12_to_yuyv(
+    const void *source_nv12,
+    std::size_t source_y_pitch,
+    std::size_t source_uv_offset,
+    std::size_t source_uv_pitch,
+    int width,
+    int height,
+    void *destination_yuyv,
+    std::size_t destination_pitch,
+    int horizontal_flip,
+    void *stream) {
+    return launch_nv12_to_yuyv(
+        source_nv12,
+        source_y_pitch,
+        source_uv_offset,
+        source_uv_pitch,
+        width,
+        height,
+        destination_yuyv,
+        destination_pitch,
+        horizontal_flip,
         stream);
 }
 
@@ -493,7 +663,8 @@ extern "C" int vlm_camera_gpu_capture_create(
     if (options == nullptr || capture_out == nullptr || options->device == nullptr ||
         options->width == 0 || options->height == 0 || options->fps == 0 ||
         options->camera_buffers < 4 || options->clean_rgb_buffers < 3 ||
-        options->camera_buffers > 32 || options->clean_rgb_buffers > 16) {
+        options->camera_buffers > 32 || options->clean_rgb_buffers > 16 ||
+        options->web_stream_buffers > 8 || options->horizontal_flip > 1) {
         set_error("create GPU camera", "invalid options or bounded pool sizes");
         return 1;
     }
@@ -540,6 +711,21 @@ extern "C" int vlm_camera_gpu_capture_acquire_rgb8(
     clean_slot->in_use = true;
     clean_slot->generation += 1;
 
+    WebStreamSlot *web_stream_slot = nullptr;
+    std::uint32_t web_stream_index = UINT32_MAX;
+    for (std::uint32_t index = 0; index < capture->web_stream_slots.size(); ++index) {
+        if (!capture->web_stream_slots[index].in_use) {
+            web_stream_slot = &capture->web_stream_slots[index];
+            web_stream_index = index;
+            web_stream_slot->in_use = true;
+            web_stream_slot->generation += 1;
+            break;
+        }
+    }
+    if (web_stream_slot == nullptr && !capture->web_stream_slots.empty()) {
+        capture->web_stream_frames_dropped_no_slot += 1;
+    }
+
     pollfd camera_poll{};
     camera_poll.fd = capture->fd;
     camera_poll.events = POLLIN | POLLPRI;
@@ -549,12 +735,18 @@ extern "C" int vlm_camera_gpu_capture_acquire_rgb8(
     } while (poll_status < 0 && errno == EINTR);
     if (poll_status == 0) {
         clean_slot->in_use = false;
+        if (web_stream_slot != nullptr) {
+            web_stream_slot->in_use = false;
+        }
         set_error("acquire GPU camera frame", "poll timeout");
         return 2;
     }
     if (poll_status < 0 ||
         (camera_poll.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
         clean_slot->in_use = false;
+        if (web_stream_slot != nullptr) {
+            web_stream_slot->in_use = false;
+        }
         if (poll_status < 0) {
             set_errno_error("poll camera");
         } else {
@@ -572,6 +764,9 @@ extern "C" int vlm_camera_gpu_capture_acquire_rgb8(
     } while (dequeue_status < 0 && errno == EINTR);
     if (dequeue_status < 0 || dequeued.index >= capture->camera_buffers.size()) {
         clean_slot->in_use = false;
+        if (web_stream_slot != nullptr) {
+            web_stream_slot->in_use = false;
+        }
         if (dequeue_status < 0) {
             set_errno_error("VIDIOC_DQBUF(DMABUF)");
         } else {
@@ -583,6 +778,30 @@ extern "C" int vlm_camera_gpu_capture_acquire_rgb8(
     CameraBuffer &camera_buffer = capture->camera_buffers[dequeued.index];
     const std::size_t uv_offset =
         static_cast<std::size_t>(capture->bytes_per_line) * capture->height;
+    const std::size_t web_stream_pitch = static_cast<std::size_t>(capture->width) * 2;
+    const std::size_t web_stream_size = web_stream_pitch * capture->height;
+    if (web_stream_slot != nullptr) {
+        const int web_conversion_status = launch_nv12_to_yuyv(
+            camera_buffer.device_pointer,
+            capture->bytes_per_line,
+            uv_offset,
+            capture->bytes_per_line,
+            static_cast<int>(capture->width),
+            static_cast<int>(capture->height),
+            web_stream_slot->device_pointer,
+            web_stream_pitch,
+            capture->horizontal_flip ? 1 : 0,
+            capture->ingest_stream);
+        if (web_conversion_status != 0) {
+            clean_slot->in_use = false;
+            web_stream_slot->in_use = false;
+            try {
+                queue_camera_buffer(capture, dequeued.index);
+            } catch (...) {
+            }
+            return 13;
+        }
+    }
     const int conversion_status = launch_nv12_to_rgb8(
         camera_buffer.device_pointer,
         capture->bytes_per_line,
@@ -592,10 +811,14 @@ extern "C" int vlm_camera_gpu_capture_acquire_rgb8(
         static_cast<int>(capture->height),
         clean_slot->device_pointer,
         clean_slot->pitch,
+        capture->horizontal_flip ? 1 : 0,
         nullptr,
         capture->ingest_stream);
     if (conversion_status != 0) {
         clean_slot->in_use = false;
+        if (web_stream_slot != nullptr) {
+            web_stream_slot->in_use = false;
+        }
         try {
             queue_camera_buffer(capture, dequeued.index);
         } catch (...) {
@@ -610,6 +833,9 @@ extern "C" int vlm_camera_gpu_capture_acquire_rgb8(
     }
     if (hip_status != hipSuccess) {
         clean_slot->in_use = false;
+        if (web_stream_slot != nullptr) {
+            web_stream_slot->in_use = false;
+        }
         set_hip_error("camera ingest event", hip_status);
         try {
             queue_camera_buffer(capture, dequeued.index);
@@ -621,12 +847,19 @@ extern "C" int vlm_camera_gpu_capture_acquire_rgb8(
         queue_camera_buffer(capture, dequeued.index);
     } catch (const std::exception &error) {
         clean_slot->in_use = false;
+        if (web_stream_slot != nullptr) {
+            web_stream_slot->in_use = false;
+        }
         set_error("requeue GPU camera buffer", error.what());
         return 15;
     }
 
     capture->frames_acquired += 1;
     capture->frames_requeued += 1;
+    if (web_stream_slot != nullptr) {
+        capture->web_stream_frames_converted += 1;
+        capture->web_stream_gpu_bytes_written += web_stream_size;
+    }
     std::uint64_t captured_ns =
         static_cast<std::uint64_t>(dequeued.timestamp.tv_sec) * 1000000000ULL +
         static_cast<std::uint64_t>(dequeued.timestamp.tv_usec) * 1000ULL;
@@ -646,6 +879,14 @@ extern "C" int vlm_camera_gpu_capture_acquire_rgb8(
         clean_slot->allocation_bytes,
         clean_slot->device_pointer,
         clean_slot->ready,
+        web_stream_slot != nullptr ? web_stream_slot->generation : 0,
+        web_stream_index,
+        web_stream_slot != nullptr ? web_stream_slot->dmabuf_fd : -1,
+        V4L2_PIX_FMT_YUYV,
+        web_stream_slot != nullptr ? web_stream_slot->device_pointer : nullptr,
+        web_stream_pitch,
+        web_stream_size,
+        web_stream_slot != nullptr ? web_stream_slot->allocation_bytes : 0,
     };
     std::snprintf(last_error, sizeof(last_error), "ok");
     return 0;
@@ -678,6 +919,25 @@ extern "C" int vlm_camera_gpu_capture_release_rgb8(
     return 0;
 }
 
+extern "C" int vlm_camera_gpu_capture_release_web_stream(
+    vlm_camera_gpu_capture *capture,
+    std::uint32_t slot_index,
+    std::uint64_t generation) {
+    if (capture == nullptr || slot_index >= capture->web_stream_slots.size()) {
+        set_error("release web stream frame", "invalid capture or slot index");
+        return 1;
+    }
+    WebStreamSlot &slot = capture->web_stream_slots[slot_index];
+    if (!slot.in_use || slot.generation != generation) {
+        set_error("release web stream frame", "stale or duplicate frame lease");
+        return 2;
+    }
+    slot.in_use = false;
+    capture->web_stream_frames_released += 1;
+    std::snprintf(last_error, sizeof(last_error), "ok");
+    return 0;
+}
+
 extern "C" int vlm_camera_gpu_capture_get_info(
     vlm_camera_gpu_capture *capture,
     vlm_camera_gpu_capture_info *info_out) {
@@ -692,18 +952,29 @@ extern "C" int vlm_camera_gpu_capture_get_info(
         capture->bytes_per_line,
         capture->size_image,
         capture->camera_allocation_bytes,
+        V4L2_PIX_FMT_YUYV,
+        capture->width * 2U,
+        capture->width * capture->height * 2U,
         capture->fps_numerator,
         capture->fps_denominator,
         static_cast<std::uint32_t>(capture->camera_buffers.size()),
         static_cast<std::uint32_t>(capture->clean_slots.size()),
+        static_cast<std::uint32_t>(capture->web_stream_slots.size()),
         capture->hip_device,
+        capture->horizontal_flip ? 1U : 0U,
         capture->frames_acquired,
         capture->frames_requeued,
         capture->frames_dropped_no_clean_slot,
+        capture->web_stream_frames_converted,
+        capture->web_stream_frames_released,
+        capture->web_stream_frames_dropped_no_slot,
+        capture->web_stream_gpu_bytes_written,
         capture->driver.c_str(),
         capture->card.c_str(),
         "hipMalloc->HSA-DMA-BUF->V4L2-DMABUF->ISP-PRIME/GART",
-        "HIP-NV12-to-RGB8-BT.601-limited",
+        capture->horizontal_flip
+            ? "HIP-NV12-to-RGB8/YUYV-BT.601-limited + horizontal-unmirror"
+            : "HIP-NV12-to-RGB8-BT.601-limited + HIP-NV12-to-YUYV(web)",
     };
     return 0;
 }

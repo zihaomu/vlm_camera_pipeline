@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#090d12">
+    <title>VLM Camera · Live GPU Demo</title>
+    <link rel="icon" href="/amd-mark.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/app.css">
+  </head>
+  <body>
+    <svg class="icon-sprite" aria-hidden="true" focusable="false">
+      <symbol id="amd-mark" viewBox="0 0 24 24">
+        <path d="M8 2h14v14l-4-4V6h-6L8 2Zm8 20H2V8l4 4v6h6l4 4Z"></path>
+      </symbol>
+    </svg>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg class="amd-mark"><use href="#amd-mark"></use></svg>
+          </span>
+          <div>
+            <h1>VLM Camera</h1>
+            <p>YOLO26 + Qwen3-VL · AMD GPU</p>
+          </div>
+        </div>
+        <div class="topbar-status">
+          <div class="amd-lockup" aria-label="Accelerated by AMD GPU">
+            <svg class="amd-mark" aria-hidden="true"><use href="#amd-mark"></use></svg>
+            <span><b>AMD</b><small>GPU ACCELERATED</small></span>
+          </div>
+          <div class="live-pill"><span></span><b id="pipeline-state">STARTING</b></div>
+        </div>
+      </header>
+
+      <section class="layout">
+        <div class="visual-column">
+          <article class="video-card">
+            <div class="video-stage" id="video-stage">
+              <video id="camera-video" autoplay muted playsinline preload="auto"></video>
+              <div class="video-empty" id="video-empty">
+                <div class="spinner"></div>
+                <p>Waiting for the GPU video stream</p>
+              </div>
+              <div class="stage-badges" aria-hidden="true">
+                <span>LIVE</span>
+                <span>1280 × 720</span>
+                <span class="amd-stage-badge">
+                  <svg class="amd-mark"><use href="#amd-mark"></use></svg>
+                  AMD GPU
+                </span>
+                <span>GPU BOX BURN-IN</span>
+              </div>
+            </div>
+          </article>
+
+          <article class="caption-card">
+            <div class="section-label">
+              <span>VISION LANGUAGE MODEL</span>
+              <span class="vlm-state" id="vlm-state">WARMING UP</span>
+            </div>
+            <p class="caption" id="caption">Waiting for the first 3-second VLM caption…</p>
+            <div class="caption-meta">
+              <span id="caption-frame">No result yet</span>
+              <span id="prompt-version-result">Prompt not applied yet</span>
+            </div>
+          </article>
+
+          <form class="prompt-card" id="prompt-form">
+            <div class="prompt-heading">
+              <div>
+                <label for="prompt-input">VLM prompt</label>
+                <p>The next available 3-second inference uses your saved prompt.</p>
+              </div>
+              <span id="prompt-count">0 / 512</span>
+            </div>
+            <textarea id="prompt-input" name="prompt" maxlength="512" rows="2" required></textarea>
+            <div class="prompt-footer">
+              <span class="save-status" id="save-status">Loading prompt…</span>
+              <button type="submit" id="save-prompt">Apply prompt</button>
+            </div>
+          </form>
+        </div>
+
+        <aside class="telemetry" aria-label="Read-only pipeline telemetry">
+          <div class="aside-heading">
+            <span>REAL-TIME PERFORMANCE</span>
+            <small>READ ONLY</small>
+          </div>
+
+          <div class="metric-grid">
+            <div class="metric primary">
+              <span>CAMERA</span>
+              <strong id="camera-fps">—</strong>
+              <small>frames / second</small>
+            </div>
+            <div class="metric">
+              <span>YOLO26</span>
+              <strong id="yolo-fps">—</strong>
+              <small>detections / second</small>
+            </div>
+            <div class="metric">
+              <span>YOLO INFER</span>
+              <strong id="yolo-ms">—</strong>
+              <small>milliseconds</small>
+            </div>
+            <div class="metric violet">
+              <span>VLM REQUEST</span>
+              <strong id="vlm-seconds">—</strong>
+              <small>seconds</small>
+            </div>
+            <div class="metric wide">
+              <span>VLM GENERATION</span>
+              <strong id="vlm-tps">—</strong>
+              <small>tokens / second</small>
+            </div>
+          </div>
+
+          <div class="pipeline-card">
+            <div class="pipeline-title">
+              <span>GPU DATA PATH</span>
+              <b>0 image host copies</b>
+            </div>
+            <ol>
+              <li class="amd-node"><i></i><div><b>Camera</b><span>V4L2 DMA-BUF</span></div><span class="amd-tech"><svg class="amd-mark"><use href="#amd-mark"></use></svg>ISP</span></li>
+              <li class="amd-node"><i></i><div><b>Preprocess</b><span>OpenCV 5 HIP</span></div><span class="amd-tech"><svg class="amd-mark"><use href="#amd-mark"></use></svg>HIP</span></li>
+              <li class="amd-node"><i></i><div><b>Detection + overlay</b><span>YOLO26 · MIGraphX · HIP</span></div><span class="amd-tech"><svg class="amd-mark"><use href="#amd-mark"></use></svg>MIGRAPHX</span></li>
+              <li class="amd-node"><i></i><div><b>Vision language</b><span>Qwen3-VL · HIP IPC</span></div><span class="amd-tech"><svg class="amd-mark"><use href="#amd-mark"></use></svg>ROCM</span></li>
+              <li class="amd-node"><i></i><div><b>Browser video</b><span>VAAPI H.264</span></div><span class="amd-tech"><svg class="amd-mark"><use href="#amd-mark"></use></svg>VAAPI</span></li>
+            </ol>
+          </div>
+
+          <div class="system-row">
+            <span><i id="video-dot"></i><b id="video-status">Video connecting</b></span>
+            <span id="client-count">0 viewers</span>
+          </div>
+        </aside>
+      </section>
+    </main>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

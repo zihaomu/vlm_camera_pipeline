@@ -16,7 +16,9 @@ typedef struct vlm_camera_gpu_capture_options {
     uint32_t fps;
     uint32_t camera_buffers;
     uint32_t clean_rgb_buffers;
+    uint32_t web_stream_buffers;
     int hip_device;
+    uint32_t horizontal_flip;
 } vlm_camera_gpu_capture_options;
 
 typedef struct vlm_camera_gpu_capture_info {
@@ -26,14 +28,23 @@ typedef struct vlm_camera_gpu_capture_info {
     uint32_t bytes_per_line;
     uint32_t size_image;
     size_t camera_allocation_bytes;
+    uint32_t web_stream_fourcc;
+    uint32_t web_stream_bytes_per_line;
+    uint32_t web_stream_size_image;
     uint32_t fps_numerator;
     uint32_t fps_denominator;
     uint32_t camera_buffers;
     uint32_t clean_rgb_buffers;
+    uint32_t web_stream_buffers;
     int hip_device;
+    uint32_t horizontal_flip;
     uint64_t frames_acquired;
     uint64_t frames_requeued;
     uint64_t frames_dropped_no_clean_slot;
+    uint64_t web_stream_frames_converted;
+    uint64_t web_stream_frames_released;
+    uint64_t web_stream_frames_dropped_no_slot;
+    uint64_t web_stream_gpu_bytes_written;
     const char *driver;
     const char *card;
     const char *memory_path;
@@ -53,6 +64,14 @@ typedef struct vlm_camera_gpu_frame {
     size_t rgb_allocation_bytes;
     void *rgb_device_pointer;
     void *ready_event;
+    uint64_t web_stream_generation;
+    uint32_t web_stream_slot_index;
+    int32_t web_stream_dmabuf_fd;
+    uint32_t web_stream_fourcc;
+    void *web_stream_device_pointer;
+    size_t web_stream_pitch;
+    size_t web_stream_size_bytes;
+    size_t web_stream_allocation_bytes;
 } vlm_camera_gpu_frame;
 
 // Creates a strict HIP-owned DMA-BUF capture ring. The running ISP4 driver must
@@ -76,6 +95,13 @@ int vlm_camera_gpu_capture_release_rgb8(
     uint64_t generation,
     void *consumer_done_event);
 
+// Releases a browser encoder YUYV DMA-BUF slot. The caller must retain it until
+// the hardware encoder has emitted the corresponding access unit.
+int vlm_camera_gpu_capture_release_web_stream(
+    vlm_camera_gpu_capture *capture,
+    uint32_t slot_index,
+    uint64_t generation);
+
 int vlm_camera_gpu_capture_get_info(
     vlm_camera_gpu_capture *capture,
     vlm_camera_gpu_capture_info *info_out);
@@ -93,7 +119,22 @@ int vlm_camera_nv12_to_rgb8(
     int height,
     void *destination_rgb8,
     size_t destination_pitch,
+    int horizontal_flip,
     void *source_ready_event,
+    void *stream);
+
+// Public for the encoder-facing packed-format numerical test. All pixels stay
+// on the GPU in production; the checker alone downloads the tiny test image.
+int vlm_camera_nv12_to_yuyv(
+    const void *source_nv12,
+    size_t source_y_pitch,
+    size_t source_uv_offset,
+    size_t source_uv_pitch,
+    int width,
+    int height,
+    void *destination_yuyv,
+    size_t destination_pitch,
+    int horizontal_flip,
     void *stream);
 
 const char *vlm_camera_gpu_capture_last_error(void);

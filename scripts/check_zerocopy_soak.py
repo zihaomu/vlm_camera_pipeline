@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -69,6 +70,11 @@ def main() -> int:
     worker = final["worker"]
     yolo_worker = final["yolo_worker"]
     runtime_checks = final["acceptance"]["runtime_checks"]
+    hybrid = final.get("hybrid") or {}
+    hybrid_runtime = hybrid.get("runtime") or {}
+    hybrid_enabled = bool(hybrid.get("enabled"))
+    vlm_interval = float(final["vlm_ms"]["interval_seconds"])
+    minimum_vlm_requests = max(1, math.floor(args.minimum_seconds / vlm_interval))
 
     file_end = datetime.fromtimestamp(metrics_path.stat().st_mtime).astimezone()
     approximate_start = file_end - timedelta(seconds=duration + 120.0)
@@ -113,12 +119,17 @@ def main() -> int:
             and int(worker["dropped_busy"]) == 0
             and worker["outstanding"] is False
             and int(worker["queue_depth"]) == 0
+            and int(worker["max_queue_depth"]) <= 1
         ),
         "yolo_worker_clean": (
             int(yolo_worker["submitted"]) == int(yolo_worker["completed"])
             and int(yolo_worker["failed"]) == 0
             and yolo_worker["outstanding"] is False
             and int(yolo_worker["queue_depth"]) == 0
+            and int(yolo_worker["max_queue_depth"]) <= 1
+            and int(yolo_worker.get("dropped_busy", 0)) == 0
+            and int(yolo_worker.get("dropped_superseded", 0)) == 0
+            and int(yolo_worker.get("dropped_while_protected", 0)) == 0
         ),
         "vlm_cadence_clean": (
             int(final["vlm_ms"]["schedule_drops"]) == 0
@@ -127,6 +138,39 @@ def main() -> int:
         "production_image_host_copy_zero": (
             int(final["copy_contract"]["image_h2d_bytes"]) == 0
             and int(final["copy_contract"]["image_d2h_bytes"]) == 0
+            and int(final["copy_contract"].get("full_detection_tensor_d2h_bytes", 0))
+            == 0
+        ),
+        "vlm_fully_gpu_offloaded": (
+            final["vlm"]["gpu_proof"]["model_layers_offloaded"]
+            == final["vlm"]["gpu_proof"]["model_layers_total"]
+            and final["vlm"]["gpu_proof"]["mmproj_backend"] == "ROCm0"
+            and final["vlm"]["gpu_proof"]["cpu_fallback_detected"] is False
+        ),
+        "minimum_vlm_request_count": int(worker["completed"]) >= minimum_vlm_requests,
+        "hybrid_exact_frame_and_metadata_contract": (
+            not hybrid_enabled
+            or (
+                int(hybrid["exact_frame_mismatches"]) == 0
+                and int(hybrid["arm_timeouts"]) == 0
+                and int(hybrid["requests_composed"]) == int(worker["completed"])
+                and int(yolo_worker["protected_submitted"])
+                == int(yolo_worker["protected_completed"])
+                == int(worker["completed"])
+                and int(hybrid["control_metadata_d2h_bytes"])
+                == int(worker["completed"]) * 260
+                and int(hybrid_runtime["control_metadata_d2h_bytes"])
+                == int(worker["completed"]) * 260
+            )
+        ),
+        "hybrid_fixed_pools_clean": (
+            not hybrid_enabled
+            or (
+                int(hybrid_runtime["dropped_no_slot"]) == 0
+                and int(final["vlm"]["preprocessor"]["dropped_no_slot"]) == 0
+                and int(final["yolo"]["dropped_input_busy"]) == 0
+                and int(final["yolo"]["dropped_no_output_slot"]) == 0
+            )
         ),
         "patched_camera_module_still_active": (
             loaded_srcversion == EXPECTED_PATCHED_MODULE_SRCVERSION
@@ -157,8 +201,11 @@ def main() -> int:
             "yolo_completion_fps": final["yolo_ms"]["completion_fps"],
             "yolo_inference_p95_ms": final["yolo_ms"]["p95"],
             "vlm_completed": worker["completed"],
+            "minimum_vlm_requests": minimum_vlm_requests,
             "vlm_latency_p95_ms": final["vlm_ms"]["p95"],
             "vlm_start_error_p95_ms": final["vlm_ms"]["start_error_p95_ms"],
+            "hybrid_requests": hybrid.get("requests_composed"),
+            "hybrid_metadata_d2h_bytes": hybrid.get("control_metadata_d2h_bytes"),
         },
         "resource_state": {
             "camera_frames_acquired": camera["frames_acquired"],

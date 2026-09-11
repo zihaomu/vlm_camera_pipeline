@@ -1,0 +1,446 @@
+{
+  "schema_version": 1,
+  "component": "hybrid-clean-fixed-image-semantic-ab",
+  "status": "passed",
+  "gpu": {
+    "name": "AMD Radeon Graphics",
+    "architecture": "gfx1151"
+  },
+  "cases": [
+    {
+      "case": "tiger",
+      "image": "third_party/notebook/opencv_amd_gpu/data/Bengal_tiger_small.jpg",
+      "expected_terms": [
+        "tiger",
+        "animal",
+        "big cat"
+      ],
+      "clean": {
+        "caption": "A tiger with orange and black stripes stands alert in a grassy area, looking forward with a focused gaze.",
+        "latency_ms": 1953.1191419991956,
+        "performance": {
+          "prompt_tokens": 518,
+          "prompt_tokens_per_second": 499.9642882651239,
+          "generated_tokens": 23,
+          "generated_tokens_per_second": 25.1655455233777
+        },
+        "primary_hit": true,
+        "avoids_forbidden_objects": true,
+        "caption_contract": true
+      },
+      "hybrid": {
+        "caption": "A tiger with orange and black stripes stands in a grassy area with green foliage andtrees.",
+        "latency_ms": 1834.0717639985087,
+        "performance": {
+          "prompt_tokens": 548,
+          "prompt_tokens_per_second": 534.982276271486,
+          "generated_tokens": 19,
+          "generated_tokens_per_second": 23.553183708634723
+        },
+        "hints": [
+          {
+            "rank": 1,
+            "class": "zebra",
+            "confidence": 0.96142578125
+          }
+        ],
+        "prompt": "Answer in at most 16 English words. Visually describe the main objects/action in the whole image. Object hints may be wrong/incomplete: #1 zebra 0.96. Check unboxed regions; never mention hints, boxes, IDs, scores, or speculate.",
+        "primary_hit": true,
+        "avoids_forbidden_objects": true,
+        "caption_contract": true
+      }
+    },
+    {
+      "case": "lotus",
+      "image": "third_party/llama.cpp-vlm-zerocopy/tools/ui/tests/stories/fixtures/assets/beautiful-flowers-lotus.webp",
+      "expected_terms": [
+        "lotus",
+        "flower",
+        "blossom"
+      ],
+      "clean": {
+        "caption": "A pink lotus flower with yellow center blooms gracefully on calm water, its petals softly unfurled, reflecting gentle ripples.",
+        "latency_ms": 2112.273484999605,
+        "performance": {
+          "prompt_tokens": 518,
+          "prompt_tokens_per_second": 503.7920564247103,
+          "generated_tokens": 27,
+          "generated_tokens_per_second": 24.97363893667795
+        },
+        "primary_hit": true,
+        "avoids_forbidden_objects": true,
+        "caption_contract": true
+      },
+      "hybrid": {
+        "caption": "A delicate pink lotus flower with vibrant yellow stamens at its center floats gracefully on astillwater.",
+        "latency_ms": 1973.0833680005162,
+        "performance": {
+          "prompt_tokens": 540,
+          "prompt_tokens_per_second": 522.9791215112934,
+          "generated_tokens": 22,
+          "generated_tokens_per_second": 23.46378844195112
+        },
+        "hints": [],
+        "prompt": "Answer in at most 16 English words. Visually describe the main objects/action in the whole image. Object hints may be wrong/incomplete: none. Check unboxed regions; never mention hints, boxes, IDs, scores, or speculate.",
+        "primary_hit": true,
+        "avoids_forbidden_objects": true,
+        "caption_contract": true
+      }
+    },
+    {
+      "case": "dog",
+      "image": "third_party/opencv-hip/samples/data/chicky_512.png",
+      "expected_terms": [
+        "dog",
+        "puppy",
+        "animal"
+      ],
+      "clean": {
+        "caption": "A dog with a pink tongue out, lying on a blue blanket, smiling with a happy expression.",
+        "latency_ms": 1805.8371279985295,
+        "performance": {
+          "prompt_tokens": 518,
+          "prompt_tokens_per_second": 537.8068899499673,
+          "generated_tokens": 21,
+          "generated_tokens_per_second": 25.00294677587001
+        },
+        "primary_hit": true,
+        "avoids_forbidden_objects": true,
+        "caption_contract": true
+      },
+      "hybrid": {
+        "caption": "A small dog with a happy expression and a pink tongue out.",
+        "latency_ms": 1631.9705070018244,
+        "performance": {
+          "prompt_tokens": 547,
+          "prompt_tokens_per_second": 551.1968125306081,
+          "generated_tokens": 13,
+          "generated_tokens_per_second": 20.423617242560304
+        },
+        "hints": [
+          {
+            "rank": 1,
+            "class": "dog",
+            "confidence": 0.85400390625
+          }
+        ],
+        "prompt": "Answer in at most 16 English words. Visually describe the main objects/action in the whole image. Object hints may be wrong/incomplete: #1 dog 0.85. Check unboxed regions; never mention hints, boxes, IDs, scores, or speculate.",
+        "primary_hit": true,
+        "avoids_forbidden_objects": true,
+        "caption_contract": true
+      }
+    }
+  ],
+  "adversarial": {
+    "wrong_hint": {
+      "injected": "#1 airplane 0.99",
+      "prompt": "Answer in at most 16 English words. Visually describe the main objects/action in the whole image. Object hints may be wrong/incomplete: #1 airplane 0.99. Check unboxed regions; never mention hints, boxes, IDs, scores, or speculate.",
+      "caption": "A tiger with orange and black stripes stands in tall grass.",
+      "latency_ms": 1494.4647490010539,
+      "performance": {
+        "prompt_tokens": 547,
+        "prompt_tokens_per_second": 557.312510697955,
+        "generated_tokens": 12,
+        "generated_tokens_per_second": 23.533426290367178
+      },
+      "primary_hit": true,
+      "wrong_hint_not_inherited": true,
+      "caption_contract": true
+    },
+    "omitted_hint": {
+      "prompt": "Answer in at most 16 English words. Visually describe the main objects/action in the whole image. Object hints may be wrong/incomplete: none. Check unboxed regions; never mention hints, boxes, IDs, scores, or speculate.",
+      "hint_count": 0,
+      "caption": "A tiger with orange and black stripes stands in a grassy area with green foliage inbackground.",
+      "latency_ms": 1866.0004880002816,
+      "performance": {
+        "prompt_tokens": 540,
+        "prompt_tokens_per_second": 548.8022391131356,
+        "generated_tokens": 19,
+        "generated_tokens_per_second": 21.63306899241135
+      },
+      "primary_hit": true,
+      "caption_contract": true
+    }
+  },
+  "scores": {
+    "clean_primary_hits": 3,
+    "hybrid_primary_hits": 3,
+    "case_count": 3
+  },
+  "validation_only_host_transfers": {
+    "h2d_bytes": 8308800,
+    "reason": "fixed-image and synthetic-detection semantic validation only",
+    "excluded_from_production_hot_path": true
+  },
+  "production_runtime": {
+    "yolo": {
+      "schema_version": 1,
+      "backend": "ultralytics-onnxruntime-migraphx-strict-iobinding",
+      "provider": "MIGraphXExecutionProvider",
+      "providers_registered": [
+        "MIGraphXExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "cpu_ep_fallback_disabled": true,
+      "migraphx_fp16": true,
+      "io_binding": true,
+      "input_device": "gpu:0",
+      "output_device": "gpu:0",
+      "input_pointer": 134441492021248,
+      "input_pool_pointers": [
+        134441492021248,
+        134441496936448
+      ],
+      "input_pool_size": 2,
+      "ort_output_pointer": 134441487849984,
+      "output_pool_pointers": [
+        134441487826944,
+        134441487834624,
+        134441487842304
+      ],
+      "output_pool_size": 3,
+      "input_shape": [
+        1,
+        3,
+        640,
+        640
+      ],
+      "output_shape": [
+        1,
+        300,
+        6
+      ],
+      "input_dtype": "torch.float32",
+      "output_dtype": "torch.float32",
+      "image_h2d_bytes": 0,
+      "image_d2h_bytes": 0,
+      "tensor_h2d_bytes": 0,
+      "tensor_d2h_bytes": 0,
+      "tensor_d2d_bytes_per_run": 7200,
+      "hot_path_numpy": false,
+      "global_device_synchronize": false,
+      "input_event_wait": true,
+      "source_event_wait_supported": true,
+      "split_prepare_infer_api": true,
+      "background_inference_supported": true,
+      "fixed_input_outstanding_limit": 2,
+      "newest_pending_snapshot_supported": true,
+      "output_event_synchronized_before_ort_reuse": true,
+      "runs": 3,
+      "prepared_frames": 3,
+      "cancelled_prepared_frames": 0,
+      "dropped_input_busy": 0,
+      "dropped_no_output_slot": 0,
+      "warmup_complete": true,
+      "gpu_arch": "gfx1151",
+      "gpu_name": "AMD Radeon Graphics",
+      "model_sha256": "88568299de91d4967f239a062c9f1619f695ebd05de73cd66b8f589591aaeb0a",
+      "ultralytics_commit": "34e213ca3ece4c18962f5bb922ec74da0c474d24",
+      "ultralytics_patch_sha256": "580502ff7b83c8131e3cc963c8e153dd8082915551361c149c72e3291477522e",
+      "kernel_library": "/home/amd/work/vlm_camera_pipeline/.local/zerocopy-gfx1151/lib/libvlm_camera_zerocopy_kernels.so.0.1.0",
+      "kernel_library_sha256": "c893ab93f58949f17553d07e2ab881b6c54eba41685bdc20947267a6bb737712",
+      "migraphx": "2.15.0.70201-81~24.04",
+      "onnxruntime": "1.23.2",
+      "cache_dir": "/home/amd/work/vlm_camera_pipeline/models/ort-migraphx-cache/gfx1151-yolo26x-strict-iobinding-v1",
+      "cache_files": [
+        "20f00-58de11c69ae52cf2-aafa5570125740ec-519c70b1cf0f20ca.mxr"
+      ]
+    },
+    "vlm": {
+      "mode": "llamacpp-ipc",
+      "server": "/home/amd/work/vlm_camera_pipeline/.build/llama-vlm-zerocopy-gfx1151/bin/llama-server",
+      "model": "/home/amd/work/vlm_camera_pipeline/models/Qwen3-VL-8B-Instruct-Q8_0.gguf",
+      "model_sha256": "cb8616bf6ed228982d9e47d7b72b42195342efa26044b0ee1873e61d9e78d3d7",
+      "mmproj": "/home/amd/work/vlm_camera_pipeline/models/mmproj-F16.gguf",
+      "mmproj_sha256": "d406d03ebabefdef86a2c86bf0c1b65f9e046f7a81c218f25de4931b46a07fc4",
+      "llama_cpp_commit": "be84695622f7be5c307d726379ddd745993669b8",
+      "device": "ROCm0",
+      "hip_code_objects": [
+        "hipv4-amdgcn-amd-amdhsa--gfx1151"
+      ],
+      "startup_seconds": 1.0420933220011648,
+      "capabilities": [
+        "completion",
+        "multimodal"
+      ],
+      "gpu_proof": {
+        "model_layers_offloaded": 37,
+        "model_layers_total": 37,
+        "mmproj_backend": "ROCm0",
+        "process_has_dev_kfd": true,
+        "cpu_fallback_detected": false
+      },
+      "command": [
+        "/home/amd/work/vlm_camera_pipeline/.build/llama-vlm-zerocopy-gfx1151/bin/llama-server",
+        "--model",
+        "/home/amd/work/vlm_camera_pipeline/models/Qwen3-VL-8B-Instruct-Q8_0.gguf",
+        "--mmproj",
+        "/home/amd/work/vlm_camera_pipeline/models/mmproj-F16.gguf",
+        "--alias",
+        "qwen3-vl-8b-instruct",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "44767",
+        "--api-key",
+        "<redacted>",
+        "--device",
+        "ROCm0",
+        "--gpu-layers",
+        "all",
+        "--fit",
+        "off",
+        "--mmproj-offload",
+        "--ctx-size",
+        "4096",
+        "--parallel",
+        "1",
+        "--threads",
+        "8",
+        "--threads-batch",
+        "8",
+        "--batch-size",
+        "512",
+        "--ubatch-size",
+        "256",
+        "--image-max-tokens",
+        "512",
+        "--mtmd-batch-max-tokens",
+        "512",
+        "--reasoning",
+        "off",
+        "--cache-ram",
+        "0",
+        "--no-webui",
+        "--no-slots",
+        "--verbosity",
+        "5"
+      ],
+      "timeout_seconds": 120.0,
+      "context_size": 4096,
+      "image_max_tokens": 512,
+      "max_tokens": 32,
+      "hip_stream_priority_requested": 1,
+      "prompt_cache_ram_mib": 0,
+      "llama_cpp_repository": "/home/amd/work/vlm_camera_pipeline/third_party/llama.cpp-vlm-zerocopy",
+      "llama_cpp_patch": "/home/amd/work/vlm_camera_pipeline/patches/llama-cpp-hip-ipc-device-input.patch",
+      "llama_cpp_patch_sha256": "36db9ddb917766764b081e5abca629c3e51484e898ef22253a31b27a9bb387ae",
+      "ggml_hip_rocwmma_fattn": true,
+      "rocwmma_kernel_marker": "ggml_cuda_flash_attn_ext_wmma_f16",
+      "ipc_protocol": "vlm-hip-ipc-v2",
+      "successful_requests": 8,
+      "request_latencies_ms": [
+        1952.9812850014423,
+        1833.9456770008837,
+        2112.171404001856,
+        1972.9853850003565,
+        1805.7302679990244,
+        1631.839380999736,
+        1494.3417380018218,
+        1865.8473410032457
+      ],
+      "last_request_performance": {
+        "prompt_tokens": 540,
+        "prompt_tokens_per_second": 548.8022391131356,
+        "generated_tokens": 19,
+        "generated_tokens_per_second": 21.63306899241135
+      },
+      "image_bytes_in_http_requests": 0,
+      "production_image_h2d_bytes": 0,
+      "production_image_d2h_bytes": 0,
+      "split_prepare_caption_api": true,
+      "two_stage_ipc_ready_supported": true,
+      "per_request_prompt_supported": true,
+      "hip_stream_priority_policy": "low-priority-vlm-normal-priority-yolo",
+      "preprocessor": {
+        "protocol": "vlm-hip-ipc-v2",
+        "device_id": 0,
+        "device_uuid": "58580000000000000000000000000000",
+        "source_shape": [
+          720,
+          1280,
+          3
+        ],
+        "target_shape": [
+          3,
+          512,
+          960
+        ],
+        "dtype": "float32",
+        "layout": "CHW",
+        "normalization": "qwen3-vl-mean-0.5-std-0.5",
+        "resize_mode": "smart_resize-pad_ceil-bilinear-align_corners",
+        "allocation_bytes_per_slot": 5898240,
+        "pool_size": 2,
+        "device_pointers": [
+          134439401160704,
+          134439313080320
+        ],
+        "base_ready_events": [
+          925460272,
+          926164480
+        ],
+        "final_ready_events": [
+          1997505152,
+          938037968
+        ],
+        "prepared": 8,
+        "dropped_no_slot": 0,
+        "production_image_h2d_bytes": 0,
+        "production_image_d2h_bytes": 0,
+        "uses_global_device_synchronize": false,
+        "two_stage_ready_supported": true
+      }
+    },
+    "hybrid": {
+      "schema_version": 1,
+      "input_mode": "hybrid-numbered-boxes-v1",
+      "max_hints": 8,
+      "confidence": 0.5,
+      "hint_record_bytes": 32,
+      "hint_buffer_bytes": 260,
+      "hint_pool_size": 2,
+      "hint_device_pointers": [
+        134440091115520,
+        134440091119616
+      ],
+      "hint_host_pointers": [
+        134453093470208,
+        134453049430016
+      ],
+      "control_ready_events": [
+        1739757408,
+        1800944400
+      ],
+      "composed": 5,
+      "dropped_no_slot": 0,
+      "control_metadata_d2h_bytes": 1300,
+      "image_h2d_bytes": 0,
+      "image_d2h_bytes": 0,
+      "full_detection_tensor_d2h_bytes": 0,
+      "uses_global_device_synchronize": false,
+      "class_count": 80,
+      "coco80_manifest_sha256": "f16026336f0f2a65361ef1002f8f4723650da544e39208b99a636705d9a4bcf1",
+      "kernel_library": "/home/amd/work/vlm_camera_pipeline/.local/zerocopy-gfx1151/lib/libvlm_camera_zerocopy_kernels.so.0.1.0",
+      "kernel_library_sha256": "c893ab93f58949f17553d07e2ab881b6c54eba41685bdc20947267a6bb737712"
+    }
+  },
+  "checks": {
+    "gpu_arch_gfx1151": true,
+    "clean_primary_target_hits_all": true,
+    "hybrid_primary_target_hits_all": true,
+    "hybrid_primary_hits_not_worse_than_clean": true,
+    "clean_captions_do_not_expose_detector_ui": true,
+    "hybrid_captions_follow_contract": true,
+    "clean_captions_avoid_forbidden_objects": true,
+    "hybrid_captions_avoid_forbidden_objects": true,
+    "wrong_airplane_hint_present_in_prompt": true,
+    "wrong_hint_not_inherited": true,
+    "wrong_hint_visual_target_preserved": true,
+    "omitted_hint_count_zero": true,
+    "omitted_hint_visual_target_preserved": true,
+    "adversarial_captions_follow_contract": true,
+    "production_image_host_copy_counters_zero": true,
+    "metadata_copy_exact_per_hybrid_request": true
+  }
+}

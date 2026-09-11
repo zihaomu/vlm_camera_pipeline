@@ -6,6 +6,9 @@
     "gfx1151": true,
     "no_camera_opened": true,
     "nv12_rgb_exact": true,
+    "nv12_rgb_horizontal_flip_exact": true,
+    "nv12_yuyv_exact": true,
+    "nv12_yuyv_horizontal_flip_exact": true,
     "opencv5_hip": true,
     "opencv_pointer_alias": true,
     "production_image_d2h_zero": true,
@@ -18,6 +21,13 @@
     "strict_driver_preflight_error": null,
     "strict_driver_preflight_passed": true,
     "z0_passed": false
+  },
+  "horizontal_flip_numerical_reference": {
+    "implementation": "fused into the HIP NV12 conversion kernels",
+    "rgb_max_absolute_error": 0,
+    "rgb_mean_absolute_error": 0.0,
+    "yuyv_max_absolute_error": 0,
+    "yuyv_mean_absolute_error": 0.0
   },
   "numerical_reference": {
     "format": "NV12",
@@ -42,26 +52,43 @@
     "isp4_patch_sha256": "dcdb1fb2f3e1c611ab56fc2b8b51ca9e7abd965fbf440b2b128412d25a20b16b",
     "isp4_source_commit": "32bed5152a6e284e02c0f803772bc48960f06e32",
     "library": "/home/amd/work/vlm_camera_pipeline/.local/zerocopy-gfx1151/lib/libvlm_camera_gpu_capture.so.0.1.0",
-    "library_sha256": "5e36ce992a3861e817356562abe3bacc75f19eb7b531e096b9fda6f39ab305fa",
+    "library_sha256": "6b72c55051e0124b4d3b67c49e695a5cba339d61d8d144f4b09cace7fe929e1c",
     "loaded_module_srcversion": "CA94CB23673E748A9ECC5F2",
+    "module_resolution": "/usr/lib/modules/6.17.0-1032-oem/updates/vlm-camera-pipeline/amd_capture.ko",
     "opencv_path": "/home/amd/work/vlm_camera_pipeline/.local/opencv5-gfx1151/python/cv2/__init__.py",
     "opencv_pointer_factory": true,
-    "opencv_version": "5.1.0-dev"
+    "opencv_version": "5.1.0-dev",
+    "persistent_module_expected_path": "/usr/lib/modules/6.17.0-1032-oem/updates/vlm-camera-pipeline/amd_capture.ko",
+    "persistent_module_installed": true
   },
   "production_contract": {
     "camera_pool_minimum": 4,
     "clean_rgb_pool_minimum": 3,
     "global_device_synchronize": false,
+    "horizontal_flip_fused_into_conversion": true,
     "image_d2h_bytes": 0,
     "image_h2d_bytes": 0,
     "memory_path": "hipMalloc->HSA-DMA-BUF->V4L2-DMABUF->ISP-PRIME/GART",
-    "python_pixels": false
+    "python_pixels": false,
+    "web_stream_format": "YUYV",
+    "web_stream_pool_maximum": 8
   },
   "schema_version": 1,
   "scope": "camera component build and offline kernel; Z0 runtime is not exercised",
   "validation_only_host_transfers": {
     "excluded_from_production_hot_path": true,
     "nv12_upload_bytes": 4608,
-    "rgb_download_bytes": 9216
+    "rgb_download_bytes": 18432,
+    "yuyv_download_bytes": 12288
+  },
+  "web_stream_numerical_reference": {
+    "input_format": "NV12",
+    "max_absolute_error": 0,
+    "mean_absolute_error": 0.0,
+    "output_format": "YUYV",
+    "output_shape": [
+      48,
+      128
+    ]
   }
 }

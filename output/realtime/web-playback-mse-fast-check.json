@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-10T18:43:00+08:00",
+  "passed": true,
+  "browser": "Mozilla Firefox 155.0.1 headless",
+  "transport": "WebSocket fragmented-MP4 / Media Source Extensions",
+  "baseline": {
+    "report": "output/realtime/web-playback-low-latency-check.json",
+    "fragment_duration_ms": 100,
+    "capture_to_display_p50_seconds": 0.20881691450028228,
+    "capture_to_display_p95_seconds": 0.2452762270049753
+  },
+  "selected_policy": {
+    "fragment_duration_ms": 50,
+    "appsink_processing_deadline_ns": 0,
+    "startup_buffer_seconds": 0.36,
+    "target_live_latency_seconds": 0.16,
+    "maximum_live_latency_seconds": 0.4,
+    "low_buffer_seconds": 0.12,
+    "recovered_buffer_seconds": 0.17,
+    "low_buffer_recovery_playback_rate": 0.985,
+    "b_frames": 0,
+    "keyframe_interval_frames": 6
+  },
+  "rejected_candidates": [
+    {
+      "name": "120 ms target",
+      "capture_to_display_p50_seconds": 0.12745982599937022,
+      "capture_to_display_p95_seconds": 0.2008262400035541,
+      "window_seconds": 25,
+      "dropped_frames": 9,
+      "reason": "insufficient Firefox decode margin"
+    },
+    {
+      "name": "250 ms target with 50 ms fragments",
+      "capture_to_display_p50_seconds": 0.22800313599871203,
+      "capture_to_display_p95_seconds": 0.27576703300418615,
+      "window_seconds": 15,
+      "dropped_frames": 0,
+      "reason": "stable but slower than the baseline median"
+    }
+  ],
+  "steady_window": {
+    "warmup_seconds": 5,
+    "duration_seconds": 40,
+    "sample_count": 789,
+    "capture_to_display_seconds": {
+      "min": 0.12594765100231342,
+      "p50": 0.15584941000160413,
+      "p95": 0.19600214299972052,
+      "max": 0.21538328199834567
+    },
+    "latest_encoded_capture_to_mse_edge_seconds": {
+      "min": 0.004980764999345411,
+      "p50": 0.021562310997978784,
+      "p95": 0.03813351999997394,
+      "max": 0.04140306299814256
+    },
+    "mse_buffered_ahead_seconds": {
+      "min": 0.09899500000000039,
+      "p50": 0.15083499999999894,
+      "p95": 0.1851609999999937,
+      "max": 0.21295999999999893
+    },
+    "append_queue_segments": {
+      "min": 0,
+      "p50": 0,
+      "p95": 0,
+      "max": 1
+    },
+    "presented_frames": 1192,
+    "dropped_frames": 0,
+    "waiting_events": 1,
+    "confirmed_rebuffers": 0,
+    "live_edge_seeks": 0,
+    "append_queue_overflows": 0
+  },
+  "improvement": {
+    "capture_to_display_p50_percent": 25.365523968895992,
+    "capture_to_display_p95_percent": 20.089221286111552
+  },
+  "real_pipeline_run": {
+    "metrics": "output/realtime/metrics-yolo-vlm-web-mse-fast-final.jsonl",
+    "duration_seconds": 95.0034002839966,
+    "camera_frames": 2830,
+    "camera_fps": 29.7884074837342,
+    "yolo_completion_fps": 29.61999245909118,
+    "encoder_submitted": 1374,
+    "encoder_inputs": 1372,
+    "encoder_encoded": 1372,
+    "encoder_released": 1374,
+    "encoder_rejected": 0,
+    "encoder_input_mapping_misses": 0,
+    "encoder_outputs_without_input": 0,
+    "active_clean_leases_at_exit": 0,
+    "active_web_leases_at_exit": 0,
+    "image_h2d_bytes": 0,
+    "image_d2h_bytes": 0
+  }
+}

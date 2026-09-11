@@ -33,6 +33,27 @@ def cpu_nv12_to_rgb8(source: np.ndarray, width: int, height: int) -> np.ndarray:
     return np.stack((red, green, blue), axis=-1).astype(np.uint8)
 
 
+def cpu_nv12_to_yuyv(source: np.ndarray, width: int, height: int) -> np.ndarray:
+    y_plane = source[:height]
+    uv_plane = source[height:].reshape(height // 2, width)
+    output = np.empty((height, width * 2), dtype=np.uint8)
+    output[:, 0::4] = y_plane[:, 0::2]
+    output[:, 2::4] = y_plane[:, 1::2]
+    output[:, 1::4] = np.repeat(uv_plane[:, 0::2], 2, axis=0)
+    output[:, 3::4] = np.repeat(uv_plane[:, 1::2], 2, axis=0)
+    return output
+
+
+def cpu_horizontal_flip_yuyv(source: np.ndarray) -> np.ndarray:
+    """Mirror packed YUYV while preserving each U/V chroma pair."""
+    height, row_bytes = source.shape
+    pairs = source.reshape(height, row_bytes // 4, 4)[:, ::-1].copy()
+    first_luma = pairs[..., 0].copy()
+    pairs[..., 0] = pairs[..., 2]
+    pairs[..., 2] = first_luma
+    return pairs.reshape(height, row_bytes)
+
+
 def main() -> int:
     library_path = WORKSPACE / (
         ".local/zerocopy-gfx1151/lib/libvlm_camera_gpu_capture.so.0.1.0"
@@ -71,10 +92,24 @@ def main() -> int:
         ctypes.c_int,
         ctypes.c_void_p,
         ctypes.c_size_t,
+        ctypes.c_int,
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
     library.vlm_camera_nv12_to_rgb8.restype = ctypes.c_int
+    library.vlm_camera_nv12_to_yuyv.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_int,
+        ctypes.c_void_p,
+    ]
+    library.vlm_camera_nv12_to_yuyv.restype = ctypes.c_int
 
     width = 64
     height = 48
@@ -84,6 +119,9 @@ def main() -> int:
     source_host = np.concatenate((y_plane, uv_plane), axis=0)
     source_gpu = torch.as_tensor(source_host, device="cuda:0")
     destination_gpu = torch.empty((height, width, 3), dtype=torch.uint8, device="cuda:0")
+    flipped_destination_gpu = torch.empty_like(destination_gpu)
+    yuyv_gpu = torch.empty((height, width * 2), dtype=torch.uint8, device="cuda:0")
+    flipped_yuyv_gpu = torch.empty_like(yuyv_gpu)
     stream = torch.cuda.current_stream(0)
     status = library.vlm_camera_nv12_to_rgb8(
         ctypes.c_void_p(source_gpu.data_ptr()),
@@ -94,12 +132,64 @@ def main() -> int:
         height,
         ctypes.c_void_p(destination_gpu.data_ptr()),
         destination_gpu.stride(0),
+        0,
         ctypes.c_void_p(),
         ctypes.c_void_p(stream.cuda_stream),
     )
     if status != 0:
         detail = library.vlm_camera_gpu_capture_last_error().decode("utf-8", "replace")
         raise RuntimeError(f"NV12 GPU kernel failed with status {status}: {detail}")
+    yuyv_status = library.vlm_camera_nv12_to_yuyv(
+        ctypes.c_void_p(source_gpu.data_ptr()),
+        width,
+        width * height,
+        width,
+        width,
+        height,
+        ctypes.c_void_p(yuyv_gpu.data_ptr()),
+        yuyv_gpu.stride(0),
+        0,
+        ctypes.c_void_p(stream.cuda_stream),
+    )
+    if yuyv_status != 0:
+        detail = library.vlm_camera_gpu_capture_last_error().decode("utf-8", "replace")
+        raise RuntimeError(f"NV12-to-YUYV GPU kernel failed with status {yuyv_status}: {detail}")
+    flipped_status = library.vlm_camera_nv12_to_rgb8(
+        ctypes.c_void_p(source_gpu.data_ptr()),
+        width,
+        width * height,
+        width,
+        width,
+        height,
+        ctypes.c_void_p(flipped_destination_gpu.data_ptr()),
+        flipped_destination_gpu.stride(0),
+        1,
+        ctypes.c_void_p(),
+        ctypes.c_void_p(stream.cuda_stream),
+    )
+    if flipped_status != 0:
+        detail = library.vlm_camera_gpu_capture_last_error().decode("utf-8", "replace")
+        raise RuntimeError(
+            f"flipped NV12 GPU kernel failed with status {flipped_status}: {detail}"
+        )
+    flipped_yuyv_status = library.vlm_camera_nv12_to_yuyv(
+        ctypes.c_void_p(source_gpu.data_ptr()),
+        width,
+        width * height,
+        width,
+        width,
+        height,
+        ctypes.c_void_p(flipped_yuyv_gpu.data_ptr()),
+        flipped_yuyv_gpu.stride(0),
+        1,
+        ctypes.c_void_p(stream.cuda_stream),
+    )
+    if flipped_yuyv_status != 0:
+        detail = library.vlm_camera_gpu_capture_last_error().decode("utf-8", "replace")
+        raise RuntimeError(
+            "flipped NV12-to-YUYV GPU kernel failed with status "
+            f"{flipped_yuyv_status}: {detail}"
+        )
     ready = torch.cuda.Event(enable_timing=False, blocking=True)
     ready.record(stream)
     ready.synchronize()
@@ -115,14 +205,35 @@ def main() -> int:
     )
     pointer_alias = int(opencv_view.cudaPtr()) == destination_gpu.data_ptr()
     actual = destination_gpu.cpu().numpy()
+    flipped_actual = flipped_destination_gpu.cpu().numpy()
+    actual_yuyv = yuyv_gpu.cpu().numpy()
+    flipped_actual_yuyv = flipped_yuyv_gpu.cpu().numpy()
     expected = cpu_nv12_to_rgb8(source_host, width, height)
+    expected_yuyv = cpu_nv12_to_yuyv(source_host, width, height)
+    flipped_expected = expected[:, ::-1]
+    flipped_expected_yuyv = cpu_horizontal_flip_yuyv(expected_yuyv)
     absolute_error = np.abs(actual.astype(np.int16) - expected.astype(np.int16))
+    yuyv_absolute_error = np.abs(
+        actual_yuyv.astype(np.int16) - expected_yuyv.astype(np.int16)
+    )
+    flipped_absolute_error = np.abs(
+        flipped_actual.astype(np.int16) - flipped_expected.astype(np.int16)
+    )
+    flipped_yuyv_absolute_error = np.abs(
+        flipped_actual_yuyv.astype(np.int16)
+        - flipped_expected_yuyv.astype(np.int16)
+    )
     checks = {
         "component_preflight": True,
         "gfx1151": preflight["gpu_code_object"] == "gfx1151",
         "opencv5_hip": preflight["opencv_version"].startswith("5."),
         "opencv_pointer_alias": pointer_alias,
         "nv12_rgb_exact": int(absolute_error.max()) == 0,
+        "nv12_yuyv_exact": int(yuyv_absolute_error.max()) == 0,
+        "nv12_rgb_horizontal_flip_exact": int(flipped_absolute_error.max()) == 0,
+        "nv12_yuyv_horizontal_flip_exact": (
+            int(flipped_yuyv_absolute_error.max()) == 0
+        ),
         "no_camera_opened": True,
         "bounded_camera_pool_contract": True,
         "bounded_clean_rgb_pool_contract": True,
@@ -155,15 +266,35 @@ def main() -> int:
             "max_absolute_error": int(absolute_error.max()),
             "mean_absolute_error": float(absolute_error.mean()),
         },
+        "web_stream_numerical_reference": {
+            "input_format": "NV12",
+            "output_format": "YUYV",
+            "output_shape": list(actual_yuyv.shape),
+            "max_absolute_error": int(yuyv_absolute_error.max()),
+            "mean_absolute_error": float(yuyv_absolute_error.mean()),
+        },
+        "horizontal_flip_numerical_reference": {
+            "implementation": "fused into the HIP NV12 conversion kernels",
+            "rgb_max_absolute_error": int(flipped_absolute_error.max()),
+            "rgb_mean_absolute_error": float(flipped_absolute_error.mean()),
+            "yuyv_max_absolute_error": int(flipped_yuyv_absolute_error.max()),
+            "yuyv_mean_absolute_error": float(flipped_yuyv_absolute_error.mean()),
+        },
         "validation_only_host_transfers": {
             "nv12_upload_bytes": int(source_host.nbytes),
-            "rgb_download_bytes": int(actual.nbytes),
+            "rgb_download_bytes": int(actual.nbytes + flipped_actual.nbytes),
+            "yuyv_download_bytes": int(
+                actual_yuyv.nbytes + flipped_actual_yuyv.nbytes
+            ),
             "excluded_from_production_hot_path": True,
         },
         "production_contract": {
             "memory_path": "hipMalloc->HSA-DMA-BUF->V4L2-DMABUF->ISP-PRIME/GART",
             "camera_pool_minimum": 4,
             "clean_rgb_pool_minimum": 3,
+            "web_stream_pool_maximum": 8,
+            "web_stream_format": "YUYV",
+            "horizontal_flip_fused_into_conversion": True,
             "python_pixels": False,
             "image_h2d_bytes": 0,
             "image_d2h_bytes": 0,

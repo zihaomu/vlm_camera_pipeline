@@ -37,7 +37,9 @@ class _CaptureOptions(ctypes.Structure):
         ("fps", ctypes.c_uint32),
         ("camera_buffers", ctypes.c_uint32),
         ("clean_rgb_buffers", ctypes.c_uint32),
+        ("web_stream_buffers", ctypes.c_uint32),
         ("hip_device", ctypes.c_int),
+        ("horizontal_flip", ctypes.c_uint32),
     ]
 
 
@@ -49,14 +51,23 @@ class _CaptureInfo(ctypes.Structure):
         ("bytes_per_line", ctypes.c_uint32),
         ("size_image", ctypes.c_uint32),
         ("camera_allocation_bytes", ctypes.c_size_t),
+        ("web_stream_fourcc", ctypes.c_uint32),
+        ("web_stream_bytes_per_line", ctypes.c_uint32),
+        ("web_stream_size_image", ctypes.c_uint32),
         ("fps_numerator", ctypes.c_uint32),
         ("fps_denominator", ctypes.c_uint32),
         ("camera_buffers", ctypes.c_uint32),
         ("clean_rgb_buffers", ctypes.c_uint32),
+        ("web_stream_buffers", ctypes.c_uint32),
         ("hip_device", ctypes.c_int),
+        ("horizontal_flip", ctypes.c_uint32),
         ("frames_acquired", ctypes.c_uint64),
         ("frames_requeued", ctypes.c_uint64),
         ("frames_dropped_no_clean_slot", ctypes.c_uint64),
+        ("web_stream_frames_converted", ctypes.c_uint64),
+        ("web_stream_frames_released", ctypes.c_uint64),
+        ("web_stream_frames_dropped_no_slot", ctypes.c_uint64),
+        ("web_stream_gpu_bytes_written", ctypes.c_uint64),
         ("driver", ctypes.c_char_p),
         ("card", ctypes.c_char_p),
         ("memory_path", ctypes.c_char_p),
@@ -78,6 +89,14 @@ class _NativeFrame(ctypes.Structure):
         ("rgb_allocation_bytes", ctypes.c_size_t),
         ("rgb_device_pointer", ctypes.c_void_p),
         ("ready_event", ctypes.c_void_p),
+        ("web_stream_generation", ctypes.c_uint64),
+        ("web_stream_slot_index", ctypes.c_uint32),
+        ("web_stream_dmabuf_fd", ctypes.c_int32),
+        ("web_stream_fourcc", ctypes.c_uint32),
+        ("web_stream_device_pointer", ctypes.c_void_p),
+        ("web_stream_pitch", ctypes.c_size_t),
+        ("web_stream_size_bytes", ctypes.c_size_t),
+        ("web_stream_allocation_bytes", ctypes.c_size_t),
     ]
 
 
@@ -214,6 +233,83 @@ def camera_component_preflight(
     }
 
 
+class GpuYuyvFrameLease:
+    """Non-copyable lease over one encoder-facing YUYV GPU DMA-BUF slot."""
+
+    __slots__ = (
+        "_owner",
+        "_released",
+        "allocation_bytes",
+        "captured_monotonic_ns",
+        "device_pointer",
+        "dmabuf_fd",
+        "fourcc",
+        "frame_id",
+        "generation",
+        "height",
+        "pitch",
+        "size_bytes",
+        "slot_index",
+        "width",
+    )
+
+    def __init__(self, owner: StrictGpuCamera, native: _NativeFrame) -> None:
+        self._owner = owner
+        self._released = False
+        self.frame_id = int(native.frame_id)
+        self.captured_monotonic_ns = int(native.captured_monotonic_ns)
+        self.generation = int(native.web_stream_generation)
+        self.slot_index = int(native.web_stream_slot_index)
+        self.dmabuf_fd = int(native.web_stream_dmabuf_fd)
+        self.device_pointer = int(native.web_stream_device_pointer or 0)
+        self.fourcc = int(native.web_stream_fourcc).to_bytes(4, "little").decode("ascii")
+        self.pitch = int(native.web_stream_pitch)
+        self.size_bytes = int(native.web_stream_size_bytes)
+        self.allocation_bytes = int(native.web_stream_allocation_bytes)
+        self.width = int(native.width)
+        self.height = int(native.height)
+        if (
+            self.generation <= 0
+            or self.captured_monotonic_ns <= 0
+            or self.dmabuf_fd < 0
+            or self.device_pointer <= 0
+            or self.fourcc != "YUYV"
+            or self.pitch < self.width * 2
+            or self.size_bytes < self.pitch * self.height
+            or self.allocation_bytes < self.size_bytes
+        ):
+            raise ZeroCopyCameraError("native camera returned an invalid web YUYV DMA-BUF")
+
+    @property
+    def released(self) -> bool:
+        return self._released
+
+    def duplicate_fd(self) -> int:
+        if self._released:
+            raise ZeroCopyCameraError("web NV12 frame lease is already released")
+        return os.dup(self.dmabuf_fd)
+
+    def release(self) -> None:
+        if self._released:
+            return
+        self._owner._release_web(self)
+        self._released = True
+
+    def __copy__(self) -> None:
+        raise TypeError("GpuYuyvFrameLease is non-copyable")
+
+    def __deepcopy__(self, memo: object) -> None:
+        del memo
+        raise TypeError("GpuYuyvFrameLease is non-copyable")
+
+    def __del__(self) -> None:
+        if not getattr(self, "_released", True):
+            try:
+                self.release()
+            except Exception:  # noqa: BLE001, S110 - destructor cannot report failures
+                pass
+
+
 class GpuFrameLease:
     """Non-copyable lease over one camera-owned clean RGB8 GPU slot."""
 
@@ -221,6 +317,7 @@ class GpuFrameLease:
         "_opencv_view",
         "_owner",
         "_released",
+        "_web_stream",
         "bytes_used",
         "captured_monotonic_ns",
         "frame_id",
@@ -251,6 +348,9 @@ class GpuFrameLease:
         self.rgb_allocation_bytes = int(native.rgb_allocation_bytes)
         self.rgb_device_pointer = int(native.rgb_device_pointer or 0)
         self.ready_event = int(native.ready_event or 0)
+        self._web_stream = (
+            GpuYuyvFrameLease(owner, native) if int(native.web_stream_dmabuf_fd) >= 0 else None
+        )
 
     @property
     def opencv_view(self) -> Any:
@@ -258,9 +358,20 @@ class GpuFrameLease:
             raise ZeroCopyCameraError("camera frame lease is already released")
         return self._opencv_view
 
+    def detach_web_stream(self) -> GpuYuyvFrameLease | None:
+        """Transfer ownership of the optional encoder-facing YUYV lease."""
+        if self._released:
+            raise ZeroCopyCameraError("camera frame lease is already released")
+        lease = self._web_stream
+        self._web_stream = None
+        return lease
+
     def release(self, *, consumer_done_event: int = 0) -> None:
         if self._released:
             return
+        if self._web_stream is not None:
+            self._web_stream.release()
+            self._web_stream = None
         self._owner._release(self, consumer_done_event=consumer_done_event)
         self._released = True
         self._opencv_view = None
@@ -306,10 +417,13 @@ class StrictGpuCamera:
         fps: int = 30,
         camera_buffers: int = 4,
         clean_rgb_buffers: int = 3,
+        web_stream_buffers: int = 0,
         hip_device: int = 0,
+        horizontal_flip: bool = False,
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.device = device
+        self.horizontal_flip = horizontal_flip
         self._preflight = camera_component_preflight(
             workspace=self.workspace,
             library=library,
@@ -321,6 +435,7 @@ class StrictGpuCamera:
         self._handle = ctypes.c_void_p()
         self._creator_thread = threading.get_ident()
         self._active: dict[int, int] = {}
+        self._active_web: dict[int, int] = {}
         options = _CaptureOptions(
             device.encode("utf-8"),
             width,
@@ -328,7 +443,9 @@ class StrictGpuCamera:
             fps,
             camera_buffers,
             clean_rgb_buffers,
+            web_stream_buffers,
             hip_device,
+            int(horizontal_flip),
         )
         status = self._library.vlm_camera_gpu_capture_create(
             ctypes.byref(options), ctypes.byref(self._handle)
@@ -358,6 +475,12 @@ class StrictGpuCamera:
             ctypes.c_void_p,
         ]
         library.vlm_camera_gpu_capture_release_rgb8.restype = ctypes.c_int
+        library.vlm_camera_gpu_capture_release_web_stream.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_uint64,
+        ]
+        library.vlm_camera_gpu_capture_release_web_stream.restype = ctypes.c_int
         library.vlm_camera_gpu_capture_get_info.argtypes = [
             ctypes.c_void_p,
             ctypes.POINTER(_CaptureInfo),
@@ -407,6 +530,12 @@ class StrictGpuCamera:
             if int(view.cudaPtr()) != pointer:
                 raise ZeroCopyCameraError("OpenCV GpuMat did not alias the native RGB pointer")
         except BaseException:
+            if int(native.web_stream_dmabuf_fd) >= 0:
+                self._library.vlm_camera_gpu_capture_release_web_stream(
+                    self._handle,
+                    native.web_stream_slot_index,
+                    native.web_stream_generation,
+                )
             self._library.vlm_camera_gpu_capture_release_rgb8(
                 self._handle,
                 native.slot_index,
@@ -416,6 +545,8 @@ class StrictGpuCamera:
             raise
         lease = GpuFrameLease(self, native, view)
         self._active[lease.slot_index] = lease.generation
+        if lease._web_stream is not None:
+            self._active_web[lease._web_stream.slot_index] = lease._web_stream.generation
         return lease
 
     def _release(self, lease: GpuFrameLease, *, consumer_done_event: int) -> None:
@@ -431,6 +562,19 @@ class StrictGpuCamera:
         if status:
             self._raise("release strict GPU frame", status)
         del self._active[lease.slot_index]
+
+    def _release_web(self, lease: GpuYuyvFrameLease) -> None:
+        self._require_creator_thread()
+        if self._active_web.get(lease.slot_index) != lease.generation:
+            raise ZeroCopyCameraError("stale or duplicate Python web stream frame lease")
+        status = self._library.vlm_camera_gpu_capture_release_web_stream(
+            self._handle,
+            lease.slot_index,
+            lease.generation,
+        )
+        if status:
+            self._raise("release strict GPU web stream frame", status)
+        del self._active_web[lease.slot_index]
 
     def runtime_info(self) -> dict[str, Any]:
         if not self._handle.value:
@@ -453,15 +597,34 @@ class StrictGpuCamera:
             "bytes_per_line": int(native.bytes_per_line),
             "size_image": int(native.size_image),
             "camera_allocation_bytes": int(native.camera_allocation_bytes),
+            "web_stream_format": int(native.web_stream_fourcc)
+            .to_bytes(4, "little")
+            .decode("ascii", "replace"),
+            "web_stream_bytes_per_line": int(native.web_stream_bytes_per_line),
+            "web_stream_size_image": int(native.web_stream_size_image),
             "fps": [int(native.fps_numerator), int(native.fps_denominator)],
             "camera_pool_size": int(native.camera_buffers),
             "clean_rgb_pool_size": int(native.clean_rgb_buffers),
+            "web_stream_pool_size": int(native.web_stream_buffers),
             "memory_path": _decode(native.memory_path),
             "color_conversion": _decode(native.color_conversion),
+            "horizontal_flip": bool(native.horizontal_flip),
+            "orientation": (
+                "front-camera physical view (GPU horizontal unmirror)"
+                if native.horizontal_flip
+                else "camera-native"
+            ),
             "frames_acquired": int(native.frames_acquired),
             "frames_requeued": int(native.frames_requeued),
             "frames_dropped_no_clean_slot": int(native.frames_dropped_no_clean_slot),
+            "web_stream_frames_converted": int(native.web_stream_frames_converted),
+            "web_stream_frames_released": int(native.web_stream_frames_released),
+            "web_stream_frames_dropped_no_slot": int(
+                native.web_stream_frames_dropped_no_slot
+            ),
+            "web_stream_gpu_bytes_written": int(native.web_stream_gpu_bytes_written),
             "active_clean_leases": len(self._active),
+            "active_web_stream_leases": len(self._active_web),
             "image_h2d_bytes": 0,
             "image_d2h_bytes": 0,
             "cpu_pixel_objects": False,
@@ -472,9 +635,10 @@ class StrictGpuCamera:
         if not self._handle.value:
             return
         self._require_creator_thread()
-        if self._active:
+        if self._active or self._active_web:
             raise ZeroCopyCameraError(
-                f"cannot close camera with active clean frame leases: {self._active}"
+                "cannot close camera with active frame leases: "
+                f"clean={self._active}, web={self._active_web}"
             )
         self._library.vlm_camera_gpu_capture_destroy(self._handle)
         self._handle = ctypes.c_void_p()

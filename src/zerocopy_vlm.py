@@ -35,6 +35,9 @@ PATCH_SIZE = 16
 MERGE_SIZE = 2
 ROCWMMA_CMAKE_ENTRY = "GGML_HIP_ROCWMMA_FATTN:BOOL=ON"
 ROCWMMA_KERNEL_MARKER = "ggml_cuda_flash_attn_ext_wmma_f16"
+SINGLE_SENTENCE_GBNF = (
+    'root ::= [A-Z] [A-Za-z0-9\'-]* (" " [A-Za-z0-9] [A-Za-z0-9\'-]*){0,15} "."'
+)
 
 
 class ZeroCopyVlmError(RuntimeError):
@@ -69,6 +72,9 @@ class _HipUuid(ctypes.Structure):
 class _HipRuntime:
     EVENT_DISABLE_TIMING = 0x2
     EVENT_INTERPROCESS = 0x4
+    HOST_MALLOC_DEFAULT = 0
+    MEMCPY_HOST_TO_DEVICE = 1
+    MEMCPY_DEVICE_TO_HOST = 2
 
     def __init__(self, device_id: int = 0) -> None:
         self._library = ctypes.CDLL("libamdhip64.so")
@@ -82,6 +88,22 @@ class _HipRuntime:
         self._library.hipMalloc.restype = ctypes.c_int
         self._library.hipFree.argtypes = [ctypes.c_void_p]
         self._library.hipFree.restype = ctypes.c_int
+        self._library.hipHostMalloc.argtypes = [
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.c_size_t,
+            ctypes.c_uint,
+        ]
+        self._library.hipHostMalloc.restype = ctypes.c_int
+        self._library.hipHostFree.argtypes = [ctypes.c_void_p]
+        self._library.hipHostFree.restype = ctypes.c_int
+        self._library.hipMemcpyAsync.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+            ctypes.c_int,
+            ctypes.c_void_p,
+        ]
+        self._library.hipMemcpyAsync.restype = ctypes.c_int
         self._library.hipEventCreateWithFlags.argtypes = [
             ctypes.POINTER(ctypes.c_void_p),
             ctypes.c_uint,
@@ -91,6 +113,8 @@ class _HipRuntime:
         self._library.hipEventDestroy.restype = ctypes.c_int
         self._library.hipEventRecord.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
         self._library.hipEventRecord.restype = ctypes.c_int
+        self._library.hipEventSynchronize.argtypes = [ctypes.c_void_p]
+        self._library.hipEventSynchronize.restype = ctypes.c_int
         self._library.hipIpcGetMemHandle.argtypes = [
             ctypes.POINTER(_HipIpcBytes),
             ctypes.c_void_p,
@@ -126,6 +150,49 @@ class _HipRuntime:
     def free(self, pointer: int) -> None:
         self._check(self._library.hipFree(ctypes.c_void_p(pointer)), "hipFree")
 
+    def host_allocate(self, size: int) -> int:
+        pointer = ctypes.c_void_p()
+        self._check(
+            self._library.hipHostMalloc(
+                ctypes.byref(pointer), size, self.HOST_MALLOC_DEFAULT
+            ),
+            "hipHostMalloc",
+        )
+        if not pointer.value:
+            raise ZeroCopyVlmError("hipHostMalloc returned a null pointer")
+        return int(pointer.value)
+
+    def host_free(self, pointer: int) -> None:
+        self._check(self._library.hipHostFree(ctypes.c_void_p(pointer)), "hipHostFree")
+
+    def copy_device_to_host_async(
+        self, destination: int, source: int, size: int, stream: int
+    ) -> None:
+        self._check(
+            self._library.hipMemcpyAsync(
+                ctypes.c_void_p(destination),
+                ctypes.c_void_p(source),
+                size,
+                self.MEMCPY_DEVICE_TO_HOST,
+                ctypes.c_void_p(stream),
+            ),
+            "hipMemcpyAsync(Hybrid control metadata D2H)",
+        )
+
+    def copy_host_to_device_async(
+        self, destination: int, source: int, size: int, stream: int
+    ) -> None:
+        self._check(
+            self._library.hipMemcpyAsync(
+                ctypes.c_void_p(destination),
+                ctypes.c_void_p(source),
+                size,
+                self.MEMCPY_HOST_TO_DEVICE,
+                ctypes.c_void_p(stream),
+            ),
+            "hipMemcpyAsync(static UI resource H2D)",
+        )
+
     def create_interprocess_event(self) -> int:
         event = ctypes.c_void_p()
         flags = self.EVENT_DISABLE_TIMING | self.EVENT_INTERPROCESS
@@ -137,6 +204,18 @@ class _HipRuntime:
             raise ZeroCopyVlmError("hipEventCreateWithFlags returned a null event")
         return int(event.value)
 
+    def create_local_event(self) -> int:
+        event = ctypes.c_void_p()
+        self._check(
+            self._library.hipEventCreateWithFlags(
+                ctypes.byref(event), self.EVENT_DISABLE_TIMING
+            ),
+            "hipEventCreateWithFlags(local)",
+        )
+        if not event.value:
+            raise ZeroCopyVlmError("hipEventCreateWithFlags returned a null local event")
+        return int(event.value)
+
     def destroy_event(self, event: int) -> None:
         self._check(self._library.hipEventDestroy(ctypes.c_void_p(event)), "hipEventDestroy")
 
@@ -144,6 +223,12 @@ class _HipRuntime:
         self._check(
             self._library.hipEventRecord(ctypes.c_void_p(event), ctypes.c_void_p(stream)),
             "hipEventRecord",
+        )
+
+    def synchronize_event(self, event: int) -> None:
+        self._check(
+            self._library.hipEventSynchronize(ctypes.c_void_p(event)),
+            "hipEventSynchronize(local)",
         )
 
     @staticmethod
@@ -278,6 +363,7 @@ class _HipVlmKernels:
 
 class _IpcSlot:
     __slots__ = (
+        "base_event",
         "event",
         "event_handle",
         "generation",
@@ -293,14 +379,18 @@ class _IpcSlot:
         self.runtime = runtime
         self.size = size
         self.pointer = runtime.allocate(size)
+        self.base_event = 0
         self.event = 0
         try:
+            self.base_event = runtime.create_local_event()
             self.event = runtime.create_interprocess_event()
             self.memory_handle = runtime.memory_handle(self.pointer)
             self.event_handle = runtime.event_handle(self.event)
         except BaseException:
             if self.event:
                 runtime.destroy_event(self.event)
+            if self.base_event:
+                runtime.destroy_event(self.base_event)
             runtime.free(self.pointer)
             raise
         self.generation = 0
@@ -324,12 +414,16 @@ class _IpcSlot:
         with self.lock:
             if self.in_use:
                 raise ZeroCopyVlmError("cannot close an in-use VLM IPC slot")
+            base_event = self.base_event
             event = self.event
             pointer = self.pointer
+            self.base_event = 0
             self.event = 0
             self.pointer = 0
         if event:
             self.runtime.destroy_event(event)
+        if base_event:
+            self.runtime.destroy_event(base_event)
         if pointer:
             self.runtime.free(pointer)
 
@@ -337,11 +431,18 @@ class _IpcSlot:
 class HipIpcImageLease:
     """Non-copyable lease keeping one exportable HIP allocation alive through HTTP completion."""
 
-    __slots__ = ("_released", "_slot", "generation", "geometry")
+    __slots__ = ("_final_ready", "_released", "_slot", "generation", "geometry")
 
-    def __init__(self, slot: _IpcSlot, geometry: QwenPreprocessGeometry) -> None:
+    def __init__(
+        self,
+        slot: _IpcSlot,
+        geometry: QwenPreprocessGeometry,
+        *,
+        final_ready: bool,
+    ) -> None:
         self._slot = slot
         self._released = False
+        self._final_ready = final_ready
         self.generation = slot.generation
         self.geometry = geometry
 
@@ -354,10 +455,20 @@ class HipIpcImageLease:
         return self._slot.event
 
     @property
+    def base_ready_event(self) -> int:
+        return self._slot.base_event
+
+    @property
+    def final_ready(self) -> bool:
+        return self._final_ready
+
+    @property
     def released(self) -> bool:
         return self._released
 
     def descriptor(self, *, request_id: int, device_uuid: str) -> dict[str, Any]:
+        if not self._final_ready:
+            raise ZeroCopyVlmError("VLM IPC image was published before final-ready")
         geometry = self.geometry
         contract = {
             "align_corners": True,
@@ -389,6 +500,14 @@ class HipIpcImageLease:
             "ready_event_handle": base64.b64encode(self._slot.event_handle).decode("ascii"),
             "preprocess_fingerprint": "sha256:" + hashlib.sha256(canonical).hexdigest(),
         }
+
+    def mark_final_ready(self, stream: int) -> None:
+        if self._released:
+            raise ZeroCopyVlmError("cannot finalize a released VLM IPC image")
+        if self._final_ready:
+            raise ZeroCopyVlmError("VLM IPC image is already final-ready")
+        self._slot.runtime.record_event(self._slot.event, stream)
+        self._final_ready = True
 
     def release(self) -> None:
         if not self._released:
@@ -462,6 +581,7 @@ class ZeroCopyVlmPreprocessor:
         source_is_bgr: bool = False,
         source_ready_event: int = 0,
         stream: int = 0,
+        defer_final_ready: bool = False,
     ) -> HipIpcImageLease | None:
         if self._closed:
             raise ZeroCopyVlmError("VLM preprocessor is closed")
@@ -489,9 +609,12 @@ class ZeroCopyVlmPreprocessor:
                 source_ready_event=source_ready_event,
                 stream=stream,
             )
-            self.runtime.record_event(slot.event, stream)
+            self.runtime.record_event(slot.base_event, stream)
             self._prepared += 1
-            return HipIpcImageLease(slot, geometry)
+            lease = HipIpcImageLease(slot, geometry, final_ready=False)
+            if not defer_final_ready:
+                lease.mark_final_ready(stream)
+            return lease
         except BaseException:
             slot.release(slot.generation)
             raise
@@ -509,11 +632,15 @@ class ZeroCopyVlmPreprocessor:
             "resize_mode": RESIZE_MODE,
             "allocation_bytes_per_slot": self.allocation_bytes,
             "pool_size": len(self._slots),
+            "device_pointers": [slot.pointer for slot in self._slots],
+            "base_ready_events": [slot.base_event for slot in self._slots],
+            "final_ready_events": [slot.event for slot in self._slots],
             "prepared": self._prepared,
             "dropped_no_slot": self._dropped_no_slot,
             "production_image_h2d_bytes": 0,
             "production_image_d2h_bytes": 0,
             "uses_global_device_synchronize": False,
+            "two_stage_ready_supported": True,
         }
 
     def close(self) -> None:
@@ -746,6 +873,7 @@ class ZeroCopyLlamaCppVlm(LlamaCppVlm):
         source_is_bgr: bool = False,
         source_ready_event: int = 0,
         stream: int = 0,
+        defer_final_ready: bool = False,
     ) -> HipIpcImageLease | None:
         """Snapshot a GPU frame into a bounded IPC slot without issuing HTTP."""
         process = self._process
@@ -760,9 +888,17 @@ class ZeroCopyLlamaCppVlm(LlamaCppVlm):
             source_is_bgr=source_is_bgr,
             source_ready_event=source_ready_event,
             stream=stream,
+            defer_final_ready=defer_final_ready,
         )
 
-    def caption_prepared(self, lease: HipIpcImageLease) -> str:
+    def caption_prepared(
+        self,
+        lease: HipIpcImageLease,
+        *,
+        prompt: str | None = None,
+        stop_at_first_sentence: bool = False,
+        constrain_english_sentence: bool = True,
+    ) -> str:
         """Consume a prepared IPC lease; ownership transfers to this call."""
         process = self._process
         if process is None or process.poll() is not None:
@@ -774,6 +910,16 @@ class ZeroCopyLlamaCppVlm(LlamaCppVlm):
             raise VlmRequestError("prepared image lease does not belong to this VLM engine")
         if lease.released:
             raise VlmRequestError("prepared image lease was already released")
+        if not lease.final_ready:
+            lease.release()
+            raise VlmRequestError("prepared image lease is not final-ready")
+        request_prompt = self.config.prompt if prompt is None else prompt.strip()
+        if not request_prompt:
+            lease.release()
+            raise VlmRequestError("VLM request prompt must not be empty")
+        if len(request_prompt) > 2048:
+            lease.release()
+            raise VlmRequestError("VLM request prompt exceeds the bounded 2048-character contract")
         with lease, self._request_lock:
             self._request_sequence += 1
             request_id = self._request_sequence
@@ -787,7 +933,7 @@ class ZeroCopyLlamaCppVlm(LlamaCppVlm):
             prompt = (
                 "<|im_start|>user\n"
                 + self._media_marker
-                + self.config.prompt
+                + request_prompt
                 + "<|im_end|>\n<|im_start|>assistant\n"
             )
             payload = {
@@ -800,6 +946,10 @@ class ZeroCopyLlamaCppVlm(LlamaCppVlm):
                 "top_k": 1,
                 "cache_prompt": False,
             }
+            if stop_at_first_sentence:
+                payload["stop"] = [".", "\n", "。", "！", "？"]
+                if constrain_english_sentence:
+                    payload["grammar"] = SINGLE_SENTENCE_GBNF
             started = time.perf_counter()
             try:
                 status, response = _request_json(
@@ -849,7 +999,10 @@ class ZeroCopyLlamaCppVlm(LlamaCppVlm):
                     "generated_tokens_per_second": generated_tokens_per_second,
                 }
             self._successful_requests += 1
-            return " ".join(caption.split())
+            normalized_caption = " ".join(caption.split())
+            if stop_at_first_sentence and normalized_caption[-1] not in ".!?。！？":
+                normalized_caption += "."
+            return normalized_caption
 
     def last_request_performance(self) -> dict[str, float | int | None]:
         with self._performance_lock:
@@ -874,6 +1027,8 @@ class ZeroCopyLlamaCppVlm(LlamaCppVlm):
                 "production_image_h2d_bytes": 0,
                 "production_image_d2h_bytes": 0,
                 "split_prepare_caption_api": True,
+                "two_stage_ipc_ready_supported": True,
+                "per_request_prompt_supported": True,
                 "hip_stream_priority_policy": "low-priority-vlm-normal-priority-yolo",
                 "preprocessor": (
                     self._preprocessor.runtime_info() if self._preprocessor is not None else None

@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-10T18:21:00+08:00",
+  "passed": true,
+  "browser": "Mozilla Firefox 155.0.1 headless",
+  "root_causes": [
+    "the previous anti-stall policy intentionally kept about 0.8 seconds of MSE media ahead",
+    "the old 1.8 second catch-up threshold allowed visible latency to persist",
+    "the 250 ms fragmented-MP4 cadence and 15-frame GOP added encode-to-live-edge delay",
+    "vah264enc rewrote source PTS and cleared buffer offsets, so encoder-src PTS was not a valid DMA-BUF completion key"
+  ],
+  "baseline_20_second_window": {
+    "legacy_media_timeline_latency_estimate_seconds": {
+      "min": 0.8694543679968412,
+      "p50": 0.8895908499980756,
+      "p95": 0.9095640189995322,
+      "max": 0.9147340139999827
+    },
+    "mse_buffer_ahead_seconds": {
+      "min": 0.480680999999997,
+      "p50": 0.637242999999998,
+      "p95": 0.7505499999999969,
+      "max": 0.7685779999999998
+    }
+  },
+  "rate_control_ab_20_second_windows": {
+    "cbr_metrics": "output/realtime/metrics-yolo-vlm-web-cbr-content-latency-probe.jsonl",
+    "cbr_capture_to_display_p50_seconds": 0.20881691450028228,
+    "cbr_capture_to_display_p95_seconds": 0.2452762270049753,
+    "cqp_metrics": "output/realtime/metrics-yolo-vlm-web-cqp-low-latency.jsonl",
+    "cqp_capture_to_display_p50_seconds": 0.22224804200330084,
+    "cqp_capture_to_display_p95_seconds": 0.2729021059997727,
+    "selected": "cbr",
+    "conclusion": "rate control was not the legacy two-second latency root cause"
+  },
+  "implemented_policy": {
+    "rate_control": "cbr",
+    "b_frames": 0,
+    "appsrc_max_buffers": 2,
+    "pipeline_queue_max_buffers": 2,
+    "keyframe_interval_frames": 6,
+    "fragment_duration_ms": 100,
+    "startup_buffer_seconds": 0.45,
+    "target_live_latency_seconds": 0.25,
+    "maximum_live_latency_seconds": 0.6,
+    "low_buffer_seconds": 0.12,
+    "rebuffer_debounce_ms": 180,
+    "lease_completion_mapping": "encoder sink input PTS FIFO paired with encoder src output; no B frames"
+  },
+  "post_fix_20_second_window": {
+    "capture_to_display_seconds": {
+      "min": 0.083483144998592,
+      "p50": 0.20881691450028228,
+      "p95": 0.2452762270049753,
+      "max": 0.2586066739976687
+    },
+    "latest_encoded_capture_to_mse_edge_seconds": {
+      "min": 0.0076240060006966814,
+      "p50": 0.05623240099885152,
+      "p95": 0.10031679299572716,
+      "max": 0.12918512699980056
+    },
+    "mse_buffer_ahead_seconds": {
+      "min": 0.019277999999999906,
+      "p50": 0.1468714999999996,
+      "p95": 0.21397800000000444,
+      "max": 0.22820400000000163
+    },
+    "presented_frames_delta": 502,
+    "dropped_frames_delta": 0,
+    "waiting_events_delta": 1,
+    "confirmed_rebuffers_delta": 0,
+    "live_edge_seeks_delta": 0,
+    "append_queue_overflows_delta": 0
+  },
+  "real_pipeline_run": {
+    "metrics": "output/realtime/metrics-yolo-vlm-web-cbr-content-latency-probe.jsonl",
+    "duration_seconds": 50.012664416994085,
+    "camera_frames": 1489,
+    "camera_fps": 29.772458983289926,
+    "encoder_submitted": 1082,
+    "encoder_inputs": 1081,
+    "encoder_encoded": 1081,
+    "encoder_released": 1082,
+    "encoder_rejected": 0,
+    "encoder_input_mapping_misses": 0,
+    "encoder_outputs_without_input": 0,
+    "latest_capture_to_encoder_ms": 6.336711,
+    "max_capture_to_encoder_ms": 101.706286,
+    "active_clean_leases_at_exit": 0,
+    "active_web_leases_at_exit": 0,
+    "image_h2d_bytes": 0,
+    "image_d2h_bytes": 0
+  }
+}

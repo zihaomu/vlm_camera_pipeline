@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "component": "yolo-guided-vlm-hybrid-v1",
+  "gpu": {
+    "name": "AMD Radeon Graphics",
+    "architecture": "gfx1151"
+  },
+  "manifest_sha256": "f16026336f0f2a65361ef1002f8f4723650da544e39208b99a636705d9a4bcf1",
+  "kernel_library": "/home/amd/work/vlm_camera_pipeline/.local/zerocopy-gfx1151/lib/libvlm_camera_zerocopy_kernels.so.0.1.0",
+  "source_shape": [
+    720,
+    1280,
+    3
+  ],
+  "target_shape": [
+    3,
+    512,
+    960
+  ],
+  "geometry": {
+    "resized_width": 911,
+    "resized_height": 512,
+    "pad_left": 24,
+    "pad_top": 0
+  },
+  "hints": [
+    {
+      "rank": 1,
+      "class_id": 2,
+      "class_name": "car",
+      "confidence": 0.949999988079071,
+      "source_index": 1,
+      "box": [
+        500.0,
+        200.0,
+        1000.0,
+        600.0
+      ]
+    },
+    {
+      "rank": 2,
+      "class_id": 1,
+      "class_name": "bicycle",
+      "confidence": 0.949999988079071,
+      "source_index": 3,
+      "box": [
+        100.0,
+        100.0,
+        300.0,
+        300.0
+      ]
+    },
+    {
+      "rank": 3,
+      "class_id": 0,
+      "class_name": "person",
+      "confidence": 0.699999988079071,
+      "source_index": 0,
+      "box": [
+        80.0,
+        90.0,
+        420.0,
+        680.0
+      ]
+    }
+  ],
+  "prompt": "Answer in at most 16 English words. Visually describe the main objects/action in the whole image. Object hints may be wrong/incomplete: #1 car 0.95; #2 bicycle 0.95; #3 person 0.70. Check unboxed regions; never mention hints, boxes, IDs, scores, or speculate.",
+  "changed_pixels": 10706,
+  "padding_changed_pixels": 0,
+  "production_copy_contract": {
+    "image_h2d_bytes": 0,
+    "image_d2h_bytes": 0,
+    "full_detection_tensor_d2h_bytes": 0,
+    "control_metadata_d2h_bytes": 260
+  },
+  "validation_only_copy_contract": {
+    "source_h2d_bytes": 2764800,
+    "detections_h2d_bytes": 7200,
+    "image_d2h_bytes": 11796480
+  },
+  "composer": {
+    "schema_version": 1,
+    "input_mode": "hybrid-numbered-boxes-v1",
+    "max_hints": 8,
+    "confidence": 0.5,
+    "hint_record_bytes": 32,
+    "hint_buffer_bytes": 260,
+    "hint_pool_size": 2,
+    "composed": 1,
+    "dropped_no_slot": 0,
+    "control_metadata_d2h_bytes": 260,
+    "image_h2d_bytes": 0,
+    "image_d2h_bytes": 0,
+    "full_detection_tensor_d2h_bytes": 0,
+    "uses_global_device_synchronize": false,
+    "class_count": 80,
+    "coco80_manifest_sha256": "f16026336f0f2a65361ef1002f8f4723650da544e39208b99a636705d9a4bcf1",
+    "kernel_library": "/home/amd/work/vlm_camera_pipeline/.local/zerocopy-gfx1151/lib/libvlm_camera_zerocopy_kernels.so.0.1.0",
+    "kernel_library_sha256": "c893ab93f58949f17553d07e2ab881b6c54eba41685bdc20947267a6bb737712"
+  },
+  "checks": {
+    "gpu_arch_gfx1151": true,
+    "target_shape_locked": true,
+    "geometry_locked": true,
+    "deterministic_topk": true,
+    "confidence_order": true,
+    "invalid_detections_filtered": true,
+    "overlay_changed_pixels": true,
+    "padding_unchanged": true,
+    "prompt_number_mapping": true,
+    "metadata_copy_exactly_abi": true,
+    "image_host_copy_counters_zero": true,
+    "global_device_synchronize_absent": true
+  },
+  "gate": {
+    "status": "passed"
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "scope": "real-camera Hybrid H4/H5 metrics contract",
+  "passed": true,
+  "checks": {
+    "status_completed": true,
+    "duration_gte_minimum": true,
+    "capability_declares_hybrid": true,
+    "summary_declares_hybrid": true,
+    "minimum_request_count": true,
+    "request_result_counts_equal": true,
+    "request_ids_unique_and_correlated": true,
+    "request_result_frame_ids_match": true,
+    "every_request_submitted": true,
+    "every_request_exact_frame": true,
+    "hint_count_bounded": true,
+    "prompt_characters_bounded": true,
+    "metadata_exactly_one_abi_buffer_per_request": true,
+    "result_errors_zero": true,
+    "caption_contract_passed": true,
+    "per_request_token_metrics_present": true,
+    "fixed_three_second_cadence": true,
+    "display_fps_gte_29": true,
+    "yolo_completion_fps_gte_25": true,
+    "vlm_start_error_p95_lte_100ms": true,
+    "worker_counts_exact": true,
+    "all_runtime_checks_true": true,
+    "all_camera_frames_requeued_and_presented": true,
+    "production_image_and_detection_host_copy_zero": true,
+    "global_device_synchronize_absent": true,
+    "leases_and_queues_drained": true
+  },
+  "measurements": {
+    "duration_seconds": 21.02091583699803,
+    "frames": 622,
+    "effective_fps": 29.589576630397996,
+    "yolo_completion_fps": 29.589576630397996,
+    "vlm_latency_ms": {
+      "interval_seconds": 3.0,
+      "latest_generated_tokens_per_second": 18.07749075921208,
+      "missed_deadlines": 0,
+      "p50": 2380.8880469987344,
+      "p95": 2600.110114999552,
+      "schedule_drops": 0,
+      "start_error_p95_ms": 65.29263199990964
+    },
+    "hybrid_request_count": 7,
+    "vlm_result_count": 7,
+    "matched_request_ids": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "metadata_d2h_bytes": 1820,
+    "captions": [
+      "The image shows a minimalist abstract composition featuring a dark gray horizontal bar with a white-colored.",
+      "A person is sitting in a chair in a modern room with bright ceiling lights andventilation.",
+      "A modern office ceiling with sleek linear LED lighting fixtures and a person seated in achair.",
+      "A modern minimalist chair with a sleek design and a person sitting on it.",
+      "A person sitting on a chair.",
+      "A person is sitting at a desk with a laptop on it.",
+      "A person is seated in a modern office environment with a bright ceiling light fixture above."
+    ],
+    "prompt_tokens": [
+      540,
+      556,
+      556,
+      556,
+      556,
+      565,
+      556
+    ],
+    "generated_tokens": [
+      18,
+      19,
+      18,
+      15,
+      7,
+      13,
+      17
+    ]
+  },
+  "metrics": "/home/amd/work/vlm_camera_pipeline/output/realtime/metrics-yolo-vlm-hybrid-gate-v3.jsonl"
+}

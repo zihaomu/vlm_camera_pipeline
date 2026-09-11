@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "checks": {
+    "gfx1151": true,
+    "class_zero_palette_exact": true,
+    "class_nine_palette_exact": true,
+    "box_interior_preserved": true,
+    "person_label_has_white_glyphs": true,
+    "traffic_light_label_has_white_glyphs": true,
+    "below_threshold_detection_not_drawn": true,
+    "production_image_h2d_zero": true,
+    "production_image_d2h_zero": true,
+    "full_detection_tensor_d2h_zero": true,
+    "one_static_class_atlas_upload": true,
+    "per_frame_detection_metadata_d2h_zero": true
+  },
+  "overlay_ms": 0.4221400013193488,
+  "frame": {
+    "format": "YUYV",
+    "width": 640,
+    "height": 360
+  },
+  "detections": [
+    "person",
+    "traffic light"
+  ],
+  "coco80_manifest_sha256": "f16026336f0f2a65361ef1002f8f4723650da544e39208b99a636705d9a4bcf1",
+  "runtime": {
+    "mode": "in-place HIP YUYV box/class-label burn-in before VAAPI",
+    "draws": 1,
+    "confidence": 0.5,
+    "class_count": 80,
+    "class_label_size": [
+      224,
+      36
+    ],
+    "class_label_h2d_bytes": 645440,
+    "per_frame_control_d2h_bytes": 0,
+    "full_detection_tensor_d2h_bytes": 0,
+    "image_h2d_bytes": 0,
+    "image_d2h_bytes": 0,
+    "uses_global_device_synchronize": false,
+    "external_consumer_boundary": "per-resource HIP event synchronize",
+    "last_ms": 0.4221400013193488,
+    "mean_ms": 0.4221400013193488,
+    "max_ms": 0.4221400013193488,
+    "coco80_manifest_sha256": "f16026336f0f2a65361ef1002f8f4723650da544e39208b99a636705d9a4bcf1",
+    "font": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "font_sha256": "5c1247acef7f2b8522a31742c76d6adcb5569bacc0be7ceaa4dc39dd252ce895",
+    "kernel_library": "/home/amd/work/vlm_camera_pipeline/.local/zerocopy-gfx1151/lib/libvlm_camera_zerocopy_kernels.so.0.1.0",
+    "kernel_library_sha256": "9e714af9dcaeed3f315fe7cd976ab1126e051eafc3bd30993e6771feaf9a9192"
+  },
+  "preview": "/home/amd/work/vlm_camera_pipeline/output/realtime/web-gpu-overlay-check.png",
+  "validation_only_readback_bytes": 460800
+}

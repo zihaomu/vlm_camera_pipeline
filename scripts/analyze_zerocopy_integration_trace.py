@@ -30,6 +30,8 @@ KERNELS = {
     "detection_boxes_kernel",
     "subtitle_kernel",
     "performance_hud_kernel",
+    "hybrid_compact_hints_kernel",
+    "hybrid_numbered_boxes_kernel",
 }
 
 
@@ -210,6 +212,25 @@ def analyze_parent(tool: dict[str, Any], metrics: dict[str, Any]) -> dict[str, A
         if performance_hud_updates
         else 0
     )
+    hybrid = metrics.get("hybrid") or {}
+    hybrid_runtime = hybrid.get("runtime") or {}
+    hybrid_requests = int(hybrid.get("requests_composed", 0))
+    hybrid_metadata_bytes = int(hybrid_runtime.get("hint_buffer_bytes", 0))
+    hybrid_device_pointers = {
+        hex(int(pointer)).lower()
+        for pointer in hybrid_runtime.get("hint_device_pointers", [])
+    }
+    hybrid_host_pointers = {
+        hex(int(pointer)).lower()
+        for pointer in hybrid_runtime.get("hint_host_pointers", [])
+    }
+    hybrid_metadata_copies = [
+        record
+        for record in hot_copies
+        if int(record["operation"]) == 3
+        and hybrid_metadata_bytes > 0
+        and int(record["bytes"]) == hybrid_metadata_bytes
+    ]
     hot_subtitle_copies = [
         record
         for record in hot_copies
@@ -228,6 +249,7 @@ def analyze_parent(tool: dict[str, Any], metrics: dict[str, Any]) -> dict[str, A
         if not (
             int(record["operation"]) == 2
             and int(record["bytes"]) in {subtitle_bytes, performance_hud_bytes}
+            or record in hybrid_metadata_copies
         )
     ]
 
@@ -237,13 +259,25 @@ def analyze_parent(tool: dict[str, Any], metrics: dict[str, Any]) -> dict[str, A
         for (kind, nbytes, _source, _destination), count in hip_copies.items()
         if kind == "DeviceToDevice" and nbytes == YOLO_OUTPUT_BYTES
     )
+    hybrid_metadata_api_count = sum(
+        count
+        for (kind, nbytes, source, destination), count in hip_copies.items()
+        if kind == "DeviceToHost"
+        and nbytes == hybrid_metadata_bytes
+        and source in hybrid_device_pointers
+        and destination in hybrid_host_pointers
+    )
     unexpected_hip_host_copies = sum(
         count
-        for (kind, nbytes, _source, _destination), count in hip_copies.items()
+        for (kind, nbytes, source, destination), count in hip_copies.items()
         if kind in {"HostToDevice", "DeviceToHost"}
         and not (
             kind == "HostToDevice"
             and nbytes in {subtitle_bytes, performance_hud_bytes}
+            or kind == "DeviceToHost"
+            and nbytes == hybrid_metadata_bytes
+            and source in hybrid_device_pointers
+            and destination in hybrid_host_pointers
         )
     )
 
@@ -254,6 +288,37 @@ def analyze_parent(tool: dict[str, Any], metrics: dict[str, Any]) -> dict[str, A
         if record.get("operation") == sync_index
         and int(record.get("start_timestamp", 0)) >= hot_start
     )
+    event_record_index = operation_index(tool, "HIP_RUNTIME_API", "hipEventRecord")
+    event_wait_index = operation_index(tool, "HIP_RUNTIME_API", "hipStreamWaitEvent")
+    event_sync_index = operation_index(tool, "HIP_RUNTIME_API", "hipEventSynchronize")
+
+    def count_event_calls(operation: int | None, handles: set[str]) -> int:
+        if operation is None:
+            return 0
+        return sum(
+            1
+            for record in buffers.get("hip_api", [])
+            if record.get("operation") == operation
+            and int(record.get("start_timestamp", 0)) >= hot_start
+            and hip_arguments(record).get("event", "").lower() in handles
+        )
+
+    vlm_preprocessor = metrics.get("vlm", {}).get("preprocessor") or {}
+    base_ready_events = {
+        hex(int(event)).lower() for event in vlm_preprocessor.get("base_ready_events", [])
+    }
+    final_ready_events = {
+        hex(int(event)).lower() for event in vlm_preprocessor.get("final_ready_events", [])
+    }
+    control_ready_events = {
+        hex(int(event)).lower()
+        for event in hybrid_runtime.get("control_ready_events", [])
+    }
+    base_ready_record_count = count_event_calls(event_record_index, base_ready_events)
+    final_ready_record_count = count_event_calls(event_record_index, final_ready_events)
+    base_ready_wait_count = count_event_calls(event_wait_index, base_ready_events)
+    control_ready_record_count = count_event_calls(event_record_index, control_ready_events)
+    control_ready_sync_count = count_event_calls(event_sync_index, control_ready_events)
     export_index = operation_index(
         tool, "HSA_AMD_EXT_API", "hsa_amd_portable_export_dmabuf"
     )
@@ -271,16 +336,23 @@ def analyze_parent(tool: dict[str, Any], metrics: dict[str, Any]) -> dict[str, A
         metrics.get("performance_hud", {}).get("enabled_at_start", False)
     )
     checks = {
-        "hot_memory_copy_only_text_ui_control_h2d": (
+        "hot_memory_copy_only_classified_control": (
             len(hot_copies)
             == len(hot_subtitle_copies) + len(hot_performance_hud_copies)
+            + len(hybrid_metadata_copies)
             and len(hot_subtitle_copies) == max(0, subtitle_updates - 1)
             and len(hot_performance_hud_copies)
             == max(0, performance_hud_updates - 1)
         ),
-        "hot_memory_d2h_zero": all(int(record["operation"]) != 3 for record in hot_copies),
+        "hot_memory_activity_d2h_has_no_unclassified_transfer": (
+            sum(int(record["operation"]) == 3 for record in hot_copies)
+            == len(hybrid_metadata_copies)
+        ),
         "hot_unclassified_host_copy_zero": not unclassified_host_copies,
         "hip_api_unclassified_host_copy_zero": unexpected_hip_host_copies == 0,
+        "hybrid_metadata_pointer_ledger_matches": (
+            hybrid_metadata_api_count == hybrid_requests
+        ),
         "yolo_output_d2d_per_run": yolo_d2d_count == yolo_runs,
         "camera_nv12_kernel_per_frame": (
             hot_kernel_counts["nv12_to_rgb8_bt601_limited_kernel"] == frames
@@ -293,6 +365,27 @@ def analyze_parent(tool: dict[str, Any], metrics: dict[str, Any]) -> dict[str, A
         ),
         "vlm_preprocess_kernel_per_request": (
             hot_kernel_counts["qwen3_vl_preprocess_rgb8_f32_kernel"] == vlm_prepared
+        ),
+        "hybrid_topk_kernel_per_request": (
+            hot_kernel_counts["hybrid_compact_hints_kernel"] == hybrid_requests
+        ),
+        "hybrid_overlay_kernel_per_request": (
+            hot_kernel_counts["hybrid_numbered_boxes_kernel"] == hybrid_requests
+        ),
+        "vlm_base_ready_event_record_per_request": (
+            base_ready_record_count == vlm_prepared
+        ),
+        "vlm_final_ready_event_record_per_request": (
+            final_ready_record_count == vlm_prepared
+        ),
+        "hybrid_waits_base_ready_event_per_request": (
+            base_ready_wait_count == hybrid_requests
+        ),
+        "hybrid_control_event_record_per_request": (
+            control_ready_record_count == hybrid_requests
+        ),
+        "hybrid_control_event_sync_per_request": (
+            control_ready_sync_count == hybrid_requests
         ),
         "present_rgb_kernel_per_frame": hot_kernel_counts["rgb8_to_rgba_kernel"] == frames,
         "present_subtitle_kernel_per_frame": hot_kernel_counts["subtitle_kernel"] == frames,
@@ -325,10 +418,26 @@ def analyze_parent(tool: dict[str, Any], metrics: dict[str, Any]) -> dict[str, A
             "initial_caption_upload_before_hot_window": 1 if subtitle_updates else 0,
             "hot_caption_uploads": len(hot_subtitle_copies),
             "bytes_each": subtitle_bytes,
+            "hybrid_metadata_d2h": {
+                "bytes_each": hybrid_metadata_bytes,
+                "activity_count": len(hybrid_metadata_copies),
+                "pointer_ledger_count": hybrid_metadata_api_count,
+                "device_pointers": sorted(hybrid_device_pointers),
+                "host_pointers": sorted(hybrid_host_pointers),
+            },
         },
         "unclassified_hot_host_copy_count": len(unclassified_host_copies),
         "hip_api_unclassified_host_copy_count": unexpected_hip_host_copies,
         "yolo_output_d2d": {"bytes_each": YOLO_OUTPUT_BYTES, "count": yolo_d2d_count},
+        "hybrid_event_ledger": {
+            "vlm_prepared": vlm_prepared,
+            "hybrid_requests": hybrid_requests,
+            "base_ready_record_count": base_ready_record_count,
+            "base_ready_wait_count": base_ready_wait_count,
+            "final_ready_record_count": final_ready_record_count,
+            "control_ready_record_count": control_ready_record_count,
+            "control_ready_sync_count": control_ready_sync_count,
+        },
         "kernel_dispatches": dict(sorted(hot_kernel_counts.items())),
         "hip_device_synchronize_count": device_sync_count,
         "hsa_dmabuf_export_count": export_count,
@@ -579,6 +688,7 @@ def main() -> int:
                 "static COCO80 class-label glyph atlas (startup H2D)",
                 "performance HUD glyph mask (startup/change H2D when enabled)",
                 "subtitle glyph alpha control resource (H2D)",
+                "Hybrid top-8 detection summary (one 260-byte D2H per request)",
                 "VLM vision position metadata (H2D)",
                 "VLM token sampling logits (D2H)",
             ],
@@ -586,6 +696,7 @@ def main() -> int:
         "notes": [
             "Camera frames remain in HIP-owned DMA-BUFs imported by V4L2 and ISP PRIME/GART.",
             "YOLO input/output, VLM image preprocessing, and VLM embeddings remain device-resident.",
+            "Hybrid reads back only a pointer-audited fixed 260-byte detection summary; full [300,6] output remains on the GPU.",
             "The prompt RAM cache is disabled because changing camera prompts caused avoidable KV checkpoint D2H traffic.",
             "Class-label, performance-HUD and caption glyphs, position metadata, and sampling logits are control-plane resources, not image payloads.",
         ],

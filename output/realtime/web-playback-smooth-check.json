@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "passed": true,
+  "browser": "Mozilla Firefox 155.0.1 headless",
+  "root_cause": [
+    "MSE playback started with only about one short fragment buffered",
+    "moof and mdat were appended separately instead of as one media segment",
+    "new WebSocket clients could begin before a sync sample",
+    "synthetic 30 FPS PTS slowly drifted from the real Camera capture cadence"
+  ],
+  "baseline_15_second_window": {
+    "wall_seconds": 15.0,
+    "media_seconds": 14.87167,
+    "presented_frames": 446,
+    "dropped_frames": 0,
+    "waiting_events": 3,
+    "stalled_events": 0,
+    "buffered_ahead_seconds_at_end": 0.170932
+  },
+  "implemented_policy": {
+    "atomic_media_segment": "one moof+mdat per WebSocket message",
+    "new_client_starts_on_sync_sample": true,
+    "startup_buffer_seconds": 1.0,
+    "target_live_latency_seconds": 0.8,
+    "rebuffer_resume_seconds": 0.7,
+    "low_buffer_seconds": 0.5,
+    "buffer_recovery_playback_rate": 0.985,
+    "rebuffer_debounce_ms": 350,
+    "encoder_pts_source": "Camera monotonic capture deltas"
+  },
+  "websocket_fragment_probe": {
+    "seconds": 10.0,
+    "messages": 60,
+    "init_layout": ["ftyp", "moov"],
+    "media_segments": 59,
+    "media_layout": ["moof", "mdat"],
+    "gap_p50_ms": 231.35542149611865,
+    "gap_p95_ms": 242.7079590052017,
+    "gap_max_ms": 244.75729199912166
+  },
+  "post_fix_startup_window": {
+    "wall_seconds": 20.008,
+    "playing_at_seconds": 1.139,
+    "presented_frames": 566,
+    "dropped_frames": 0,
+    "waiting_events": 0,
+    "stalled_events": 0,
+    "confirmed_rebuffers": 0,
+    "append_queue_overflows": 0
+  },
+  "post_fix_steady_window": {
+    "wall_seconds": 40.001,
+    "media_seconds": 39.759794,
+    "presented_frames": 1192,
+    "presented_fps": 29.799255018624535,
+    "dropped_frames": 0,
+    "waiting_events": 0,
+    "stalled_events": 0,
+    "pause_events": 0,
+    "confirmed_rebuffers": 0,
+    "append_queue_overflows": 0,
+    "buffered_ahead_seconds_before": 0.7224810000000161,
+    "buffered_ahead_seconds_after": 0.729282000000012
+  },
+  "real_pipeline_run": {
+    "metrics": "output/realtime/metrics-yolo-vlm-web-playback-keyframe-final.jsonl",
+    "duration_seconds": 463.60126138899795,
+    "camera_frames": 13821,
+    "camera_fps": 29.812257107737015,
+    "yolo_completion_fps": 29.69362067470572,
+    "vlm_completed": 88,
+    "vlm_failed": 0,
+    "encoder_submitted": 12547,
+    "encoder_encoded": 12547,
+    "encoder_released": 12547,
+    "encoder_rejected": 0,
+    "timestamp_discontinuities": 0,
+    "image_h2d_bytes": 0,
+    "image_d2h_bytes": 0
+  }
+}
